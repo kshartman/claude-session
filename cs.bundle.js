@@ -29076,7 +29076,7 @@ async function resolveSession(config, prefix) {
     if (matches.length > 1) {
       console.error(`Ambiguous match for '${prefix}'. Did you mean:`);
       for (const m of matches) {
-        console.error(`  ${shortId(m.session_id)}  ${m.project_name}  ${m.machine}  ${m.title ?? ""}`);
+        console.error(`  ${m.project_name}  ${m.session_id}  ${m.machine}  ${m.title ?? ""}`);
       }
       process.exit(1);
     }
@@ -29294,7 +29294,7 @@ async function cmdTag(config, prefix, label) {
     if (matches.length > 1) {
       console.error(`Ambiguous prefix '${prefix}'. Did you mean:`);
       for (const m of matches) {
-        console.error(`  ${shortId(m.session_id)}  ${m.project_name}  ${m.machine}`);
+        console.error(`  ${m.project_name}  ${m.session_id}  ${m.machine}  ${m.title ?? ""}`);
       }
       process.exit(1);
     }
@@ -29419,7 +29419,7 @@ async function cmdRm(config, prefix, undo) {
     if (matches.length > 1) {
       console.error(`Ambiguous match for '${prefix}'. Did you mean:`);
       for (const m of matches) {
-        console.error(`  ${shortId(m.session_id)}  ${m.project_name}  ${m.machine}  ${m.title ?? ""}`);
+        console.error(`  ${m.project_name}  ${m.session_id}  ${m.machine}  ${m.title ?? ""}`);
       }
       process.exit(1);
     }
@@ -29492,7 +29492,7 @@ async function cmdPurge(config, prefix, confirm) {
     if (matches.length > 1) {
       console.error(`Ambiguous match for '${prefix}'. Did you mean:`);
       for (const m of matches) {
-        console.error(`  ${shortId(m.session_id)}  ${m.project_name}  ${m.machine}  ${m.title ?? ""}`);
+        console.error(`  ${m.project_name}  ${m.session_id}  ${m.machine}  ${m.title ?? ""}`);
       }
       process.exit(1);
     }
