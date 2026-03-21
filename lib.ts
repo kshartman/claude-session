@@ -1,5 +1,7 @@
 // --- types ---
 
+// VERSION is set here and in the VERSION file — keep in sync when releasing
+export const VERSION = "1.0.2";
 export const SCHEMA_VERSION = 1;
 
 export type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";

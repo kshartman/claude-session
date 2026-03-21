@@ -9,6 +9,7 @@ import {
   type SessionRecord,
   type SessionState,
   type CsConfig,
+  VERSION,
   SCHEMA_VERSION,
   loadConfig,
   ConfigError,
@@ -1000,6 +1001,57 @@ async function cmdDeleted(config: CsConfig): Promise<void> {
   });
 }
 
+const BASE_URL = "https://git.bogometer.com/shartman/claude-session/-/raw/main";
+
+async function cmdUpdate(): Promise<void> {
+  // Fetch remote version
+  let remoteVersion: string;
+  try {
+    const resp = await fetch(`${BASE_URL}/VERSION`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    remoteVersion = (await resp.text()).trim();
+  } catch (err) {
+    console.error(`Failed to check for updates: ${err}`);
+    process.exit(1);
+  }
+
+  if (remoteVersion === VERSION) {
+    console.log(`cs v${VERSION} is up to date.`);
+    return;
+  }
+
+  console.log(`Updating cs v${VERSION} → v${remoteVersion}...`);
+
+  // Download new bundle
+  const binPath = `${homedir()}/.local/bin/cs`;
+  try {
+    const resp = await fetch(`${BASE_URL}/cs.bundle.js`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const content = await resp.text();
+    await Bun.write(binPath, content);
+    const { chmodSync } = await import("fs");
+    chmodSync(binPath, 0o755);
+  } catch (err) {
+    console.error(`Failed to download bundle: ${err}`);
+    process.exit(1);
+  }
+
+  // Update man page
+  const manPath = `${homedir()}/.local/share/man/man1/cs.1`;
+  try {
+    const resp = await fetch(`${BASE_URL}/cs.1`);
+    if (resp.ok) {
+      const { mkdirSync } = await import("fs");
+      mkdirSync(`${homedir()}/.local/share/man/man1`, { recursive: true });
+      await Bun.write(manPath, await resp.text());
+    }
+  } catch {
+    // Man page update is non-critical
+  }
+
+  console.log(`Updated to cs v${remoteVersion}`);
+}
+
 // --- usage ---
 
 function printUsage(): void {
@@ -1023,6 +1075,8 @@ ${bold("Usage:")}
   cs rm --undo <id-or-name>       Restore a soft-deleted session
   cs prune [--days N] [--all]     Bulk soft-delete unnamed/untagged sessions
   cs deleted                      List soft-deleted sessions
+  cs update                       Update cs to latest version
+  cs version                      Show current version
 
 ${bold("List options:")}
   --all                           Show all machines
@@ -1045,6 +1099,16 @@ async function main(): Promise<void> {
 
   if (command === "status") {
     await cmdStatus();
+    return;
+  }
+
+  if (command === "update") {
+    await cmdUpdate();
+    return;
+  }
+
+  if (command === "version" || command === "--version") {
+    console.log(`cs v${VERSION}`);
     return;
   }
 
