@@ -29595,6 +29595,15 @@ async function cmdUpdate() {
     }
   } catch {}
   console.log(`Updated to cs v${remoteVersion}`);
+  try {
+    const cron = Bun.spawnSync(["crontab", "-l"]);
+    const cronOut = cron.stdout.toString();
+    if (!cronOut.includes("cs sync")) {
+      console.log(yellow(`
+No cron sync detected. Set up automatic sync:
+  (crontab -l 2>/dev/null; echo '*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null') | crontab -`));
+    }
+  } catch {}
 }
 function printUsage() {
   console.log(`${bold("cs")} \u2014 Claude Session Manager

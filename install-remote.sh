@@ -80,6 +80,15 @@ else
   echo "  Config exists at $CONFIG_FILE"
 fi
 
+# Set up cron sync if not already present
+CRON_CMD="PATH=\"\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH\" cs sync --quiet 2>/dev/null"
+if crontab -l 2>/dev/null | grep -q "cs sync"; then
+  echo "  Cron sync already configured"
+else
+  (crontab -l 2>/dev/null; echo "*/5 * * * * $CRON_CMD") | crontab -
+  echo "  Added cron: sync every 5 minutes"
+fi
+
 # Check PATH
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
   echo
@@ -92,4 +101,3 @@ echo
 echo "Done! Next steps:"
 echo "  1. Edit $CONFIG_FILE with your MongoDB credentials"
 echo "  2. cs sync"
-echo "  3. Optional: echo 'cs sync --quiet &' >> ~/.bashrc"
