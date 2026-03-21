@@ -328,7 +328,7 @@ async function cmdDashboard(config: CsConfig): Promise<void> {
   console.log(bold("  Claude Session Manager\n"));
 
   const headers = ["PROJECT", "ID", "STATE", "UPDATED", "TITLE"];
-  const colWidths = [14, 8, 8, 10, 30];
+  const colWidths = [12, 8, 8, 10, 30];
 
   if (dbSessions) {
     // Merge: use DB records but overlay live tmux state
@@ -344,12 +344,15 @@ async function cmdDashboard(config: CsConfig): Promise<void> {
         state = liveStates.get(s.title) ?? null;
         seenTmux.add(s.title);
       }
+      const proj = s.project_name.length > 12 ? s.project_name.slice(0, 11) + ">" : s.project_name;
+      const title = s.title ?? "(no title)";
+      const truncTitle = title.length > 30 ? title.slice(0, 29) + ">" : title;
       return [
-        staleText(s.project_name, s.updated_at),
+        staleText(proj, s.updated_at),
         dim(shortId(s.session_id)),
         stateColor(state),
         relativeTime(s.updated_at),
-        staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at),
+        staleText(truncTitle, s.updated_at),
       ];
     });
 
@@ -403,7 +406,10 @@ async function cmdList(
     if (opts.local) {
       filter["machine"] = hostname();
     } else if (opts.host) {
-      filter["machine"] = opts.host;
+      // Match full hostname or short name
+      filter["machine"] = opts.host.includes(".")
+        ? opts.host
+        : { $regex: `^${escapeRegex(opts.host)}(\\.|\$)` };
     }
     if (opts.project) {
       filter["project_name"] = opts.project;
@@ -421,15 +427,20 @@ async function cmdList(
     }
 
     const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
-    const colWidths = [14, 8, 14, 8, 10, 30];
-    const rows = results.map((s) => [
-      staleText(s.project_name, s.updated_at),
-      dim(shortId(s.session_id)),
-      machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]!),
-      stateColor(s.state),
-      relativeTime(s.updated_at),
-      staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at),
-    ]);
+    const colWidths = [12, 8, 8, 8, 10, 30];
+    const rows = results.map((s) => {
+      const proj = s.project_name.length > 12 ? s.project_name.slice(0, 11) + ">" : s.project_name;
+      const title = s.title ?? "(no title)";
+      const truncTitle = title.length > 30 ? title.slice(0, 29) + ">" : title;
+      return [
+        staleText(proj, s.updated_at),
+        dim(shortId(s.session_id)),
+        machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]!),
+        stateColor(s.state),
+        relativeTime(s.updated_at),
+        staleText(truncTitle, s.updated_at),
+      ];
+    });
 
     console.log(formatTable(headers, rows, colWidths));
   });
