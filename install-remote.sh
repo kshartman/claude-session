@@ -14,8 +14,9 @@ done
 BIN_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/cs"
 CONFIG_FILE="$CONFIG_DIR/config.json"
-BUNDLE_URL="https://git.bogometer.com/shartman/claude-session/-/raw/main/cs.bundle.js"
-MANPAGE_URL="https://git.bogometer.com/shartman/claude-session/-/raw/main/cs.1"
+CS_REPO_URL="${CS_REPO_URL:-https://git.bogometer.com/shartman/claude-session/-/raw/main}"
+BUNDLE_URL="$CS_REPO_URL/cs.bundle.js"
+MANPAGE_URL="$CS_REPO_URL/cs.1"
 MAN_DIR="$HOME/.local/share/man/man1"
 
 echo "cs — Claude Session Manager (remote install)"

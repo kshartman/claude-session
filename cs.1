@@ -187,6 +187,32 @@ dashboard. If a session name is set via
 .B /rename
 in Claude Code, that name takes priority and is also used as the tmux
 session name.
+.SH INSTALLATION
+Install on any Linux host with:
+.PP
+.RS
+.nf
+curl -sSL https://git.bogometer.com/shartman/claude-session/-/raw/main/install-remote.sh | bash
+.fi
+.RE
+.PP
+Options (pass via
+.BR "bash -s --" ):
+.TP
+.B --nocron
+Skip automatic cron sync setup.
+.TP
+.B --noconfig
+Skip config copy from source host.
+.PP
+Override the repo URL with
+.BR CS_REPO_URL :
+.PP
+.RS
+.nf
+CS_REPO_URL=https://your-host/path curl ... | bash
+.fi
+.RE
 .SH CONFIGURATION
 Configuration is read from
 .IR ~/.config/cs/config.json :
@@ -206,6 +232,17 @@ to protect MongoDB credentials.
 .B NO_COLOR
 If set, disables all ANSI color output. See
 .IR https://no-color.org/ .
+.TP
+.B CS_REPO_URL
+Override the default repository URL for
+.B cs update
+and
+.BR install-remote.sh .
+Useful for self-hosted GitLab or GitHub instances.
+.TP
+.B CS_CONFIG_HOST
+SSH hostname to copy config from during install (default:
+.IR cs ).
 .SH FILES
 .TP
 .I ~/.config/cs/config.json

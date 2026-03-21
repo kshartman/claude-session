@@ -1223,7 +1223,7 @@ async function cmdPurge(
   console.log(`  Purged ${red(session.title ?? shortId(session.session_id))} from ${session.machine}`);
 }
 
-const BASE_URL = "https://git.bogometer.com/shartman/claude-session/-/raw/main";
+const BASE_URL = process.env["CS_REPO_URL"] ?? "https://git.bogometer.com/shartman/claude-session/-/raw/main";
 
 function ensureCron(): void {
   try {
@@ -1334,7 +1334,15 @@ ${bold("List options:")}
   --local                         This host only
   --host <hostname>               Filter by host
   --project <name>                Filter by project
-  --limit <n>                     Max results (default: 20)`);
+  --limit <n>                     Max results (default: 20)
+
+${bold("Install:")}
+  curl -sSL ${BASE_URL.replace("/-/raw/main", "/-/raw/main/install-remote.sh")} | bash
+  curl ... | bash -s -- --nocron --noconfig   (skip cron/config)
+
+${bold("Environment:")}
+  CS_REPO_URL                     Override repo URL for update/install
+  NO_COLOR                        Disable color output`);
 }
 
 // --- main ---
