@@ -25,6 +25,7 @@ export interface SessionRecord {
 export interface CsConfig {
   mongoUri: string;
   showDetachHint?: boolean;
+  listFQDN?: boolean;
 }
 
 // --- config ---
@@ -72,6 +73,7 @@ export function loadConfig(): CsConfig {
   return {
     mongoUri: parsed["mongoUri"],
     showDetachHint: parsed["showDetachHint"] === true,
+    listFQDN: parsed["listFQDN"] !== false,
   };
 }
 

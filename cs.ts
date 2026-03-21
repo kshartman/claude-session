@@ -341,16 +341,16 @@ async function cmdDashboard(config: CsConfig): Promise<void> {
   // Recent sessions from DB
   if (dbSessions && dbSessions.length > 0) {
     console.log(bold("Recent Sessions:"));
-    const headers = ["PROJECT", "TITLE", "STATE", "UPDATED", "ID"];
-    const colWidths = [15, 30, 8, 10, 8];
+    const headers = ["PROJECT", "ID", "STATE", "UPDATED", "TITLE"];
+    const colWidths = [14, 8, 8, 10, 30];
     const rows = dbSessions.map((s) => [
       staleText(s.project_name, s.updated_at),
-      staleText(s.title ?? dim("(no title)"), s.updated_at),
+      dim(shortId(s.session_id)),
       s.tmux_session && liveStates.has(s.tmux_session)
         ? stateColor(liveStates.get(s.tmux_session) ?? null)
         : stateColor(s.state ?? null),
       relativeTime(s.updated_at),
-      dim(shortId(s.session_id)),
+      staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at),
     ]);
     console.log(formatTable(headers, rows, colWidths));
   } else if (!dbSessions) {
@@ -389,16 +389,15 @@ async function cmdList(
       return;
     }
 
-    const headers = ["MACHINE", "PROJECT", "TITLE", "TAG", "STATE", "UPDATED", "ID"];
-    const colWidths = [14, 14, 28, 10, 8, 10, 8];
+    const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
+    const colWidths = [14, 8, 14, 8, 10, 30];
     const rows = results.map((s) => [
-      machineColor(s.machine),
       staleText(s.project_name, s.updated_at),
-      staleText(s.title ?? dim("(no title)"), s.updated_at),
-      s.tag ?? dim("—"),
+      dim(shortId(s.session_id)),
+      machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]!),
       stateColor(s.state),
       relativeTime(s.updated_at),
-      dim(shortId(s.session_id)),
+      staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at),
     ]);
 
     console.log(formatTable(headers, rows, colWidths));
