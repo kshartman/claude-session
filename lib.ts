@@ -28,6 +28,7 @@ export interface CsConfig {
   mongoUri: string;
   showDetachHint?: boolean;
   listFQDN?: boolean;
+  noCron?: boolean;
 }
 
 // --- config ---
@@ -76,6 +77,7 @@ export function loadConfig(): CsConfig {
     mongoUri: parsed["mongoUri"],
     showDetachHint: parsed["showDetachHint"] === true,
     listFQDN: parsed["listFQDN"] !== false,
+    noCron: parsed["noCron"] === true,
   };
 }
 
