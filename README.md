@@ -4,13 +4,25 @@ Manage Claude Code sessions across multiple Linux hosts. Launch persistent sessi
 
 ## Install
 
+### One-liner (remote install)
+
+On any machine with Bun and tmux:
+
+```bash
+curl -sSL https://git.bogometer.com/shartman/claude-session/-/raw/main/install-remote.sh | bash
+```
+
+Downloads a single bundled JS file to `~/.local/bin/cs` and sets up the config directory.
+
+### From source
+
 ```bash
 git clone <repo> ~/projects/cs
 cd ~/projects/cs
 ./install.sh
 ```
 
-Edit `~/.config/cs/config.json` with your MongoDB password, then:
+Edit `~/.config/cs/config.json` with your MongoDB credentials, then:
 
 ```bash
 cs sync     # import your existing sessions
@@ -69,16 +81,29 @@ cs launch myproject "fix the nginx config"
 
 The output tells you the session name and how to reconnect.
 
-### `cs attach <id-prefix>`
+### `cs adopt <id-or-name> [--attach]`
+
+Wrap an existing Claude session in a managed tmux session. Use this to take a session you started normally and make it persistent.
+
+```bash
+cs adopt claude-session             # wrap in tmux, leave detached
+cs adopt claude-session --attach    # wrap and connect immediately
+cs adopt 952d --attach              # works with ID prefix too
+```
+
+### `cs attach <id-or-name>`
 
 Reconnect to a session. Works **across machines** — if the session is on a different host, cs automatically SSH's there.
 
 ```bash
-cs attach 952d          # local session
-cs attach a4b9          # remote session — auto-SSH
+cs attach claude-session    # by /rename name
+cs attach 952d              # by ID prefix
+cs attach a4b9              # remote session — auto-SSH
 ```
 
-Prefix matching works like git — type enough characters to be unique. If ambiguous, cs lists the matches.
+You can use a session ID prefix (like git), a `/rename` name (exact match), or a title substring. If ambiguous, cs lists the matches.
+
+If you're already inside tmux, cs uses `switch-client` instead of nesting.
 
 ### `cs kill <id-prefix>`
 
@@ -137,6 +162,8 @@ The MongoDB database is the shared layer — every machine syncs to it, and any 
 
 Sessions are auto-titled from your first message to Claude. Instead of seeing `952dd9c9-b8ce-4e7f-...`, you see "fix the nginx config".
 
+If you use `/rename` in Claude Code (e.g., `/rename auth-refactor`), that name takes priority and becomes both the session title and the tmux session name. You can then use it everywhere: `cs attach auth-refactor`, `cs info auth-refactor`, etc.
+
 ### Remote attach
 
 When you `cs attach` a session that lives on a different machine, cs looks up the machine in MongoDB and runs `ssh <machine> -t tmux attach-session -t cs-<id>`. You need SSH key auth set up between machines.
@@ -151,13 +178,19 @@ Config lives at `~/.config/cs/config.json`:
 
 ```json
 {
-  "mongoUri": "mongodb://claude:<password>@your-mongo-host:27017/claude?authMechanism=SCRAM-SHA-256&tls=true"
+  "mongoUri": "mongodb://claude:<password>@your-mongo-host:27017/claude?authMechanism=SCRAM-SHA-256&tls=true",
+  "showDetachHint": true
 }
 ```
 
+| Option | Default | Description |
+|--------|---------|-------------|
+| `mongoUri` | (required) | MongoDB connection string |
+| `showDetachHint` | `false` | Show detach key combo in the tmux status bar when attached
+
 ## Multi-machine setup
 
-1. Install cs on each machine (clone + `./install.sh`)
+1. Install cs on each machine (`curl` one-liner or clone + `./install.sh`)
 2. Use the same MongoDB connection string on all machines
 3. Add `cs sync --quiet &` to each machine's `.bashrc`
 4. Set up SSH key auth between machines (for remote attach)

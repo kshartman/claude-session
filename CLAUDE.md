@@ -44,8 +44,9 @@ Decode it by replacing leading `-` and remaining `-` with `/` — but validate
 against the actual filesystem to handle edge cases.
 
 Session JSONL files contain message objects. The first human message text is
-extracted as the session title (truncated to 80 chars). Session summary files
-may exist at:
+extracted as the session title (truncated to 80 chars). If the user has set a
+session name via `/rename`, the `agentName` field in the JSONL takes priority
+as the session title. Session summary files may exist at:
 ```
 ~/.claude/projects/<path-hash>/<session-id>/session-memory/summary.md
 ```
@@ -62,7 +63,7 @@ interface SessionRecord {
   started_at: Date;            // mtime of first message or file ctime
   updated_at: Date;            // mtime of session file
   message_count: number;       // number of lines in the JSONL
-  title: string | null;        // first human message text, truncated to 80 chars
+  title: string | null;        // /rename name if set, else first human message (80 chars)
   tag: string | null;          // user-applied label (only set via cs tag)
   state: SessionState | null;  // detected from tmux: WORKING | WAITING | IDLE | DEAD
   tmux_session: string | null; // tmux session name (cs-<short-id>)
@@ -84,8 +85,10 @@ Upsert key: `{ session_id, machine }` — idempotent, safe to run on every login
 ## tmux Session Management
 
 Sessions launched via `cs launch` run Claude Code inside detached tmux sessions,
-surviving SSH disconnects. tmux session naming convention: `cs-<short-session-id>`
-(first 8 chars of UUID).
+surviving SSH disconnects. tmux session naming convention:
+
+- Has `/rename` name → use it as-is (e.g., `claude-session`)
+- No rename → `<project>-<short-id>` (e.g., `trading-8ffc2399`)
 
 ### Remote Attach
 
@@ -93,11 +96,15 @@ surviving SSH disconnects. tmux session naming convention: `cs-<short-session-id
 machine field in MongoDB:
 
 - **Local** (session machine == hostname): `exec tmux attach-session -t cs-<id>`
+- **Local inside tmux**: `exec tmux switch-client -t cs-<id>` (avoids nesting)
 - **Remote** (session machine != hostname): `exec ssh <machine> -t tmux attach-session -t cs-<id>`
 
 Requires SSH key auth between machines. On detach (Ctrl-b d), the SSH connection
 closes and the user returns to their local shell. The Claude session continues
 running on the remote host.
+
+Session identifiers can be: session ID prefix, `/rename` name (exact match),
+or title substring (case-insensitive).
 
 ### State Detection
 
@@ -131,16 +138,21 @@ cs list [--all] [--machine <h>] [--project <name>] [--limit <n>]
                                 #   MACHINE | PROJECT | TITLE | TAG | STATE | UPDATED | ID
 
 cs launch <project> [prompt]    # start Claude in a detached tmux session
-                                # tmux session name: cs-<short-id>
                                 # optional initial prompt
 
-cs attach <session_id_prefix>   # reconnect to a tmux-backed session
-                                # auto-detects local vs remote from MongoDB
-                                # local: tmux attach-session -t cs-<id>
-                                # remote: ssh <machine> -t tmux attach -t cs-<id>
-                                # ambiguous prefix: list matches, exit 1
+cs adopt <id-or-name> [--attach]
+                                # wrap existing session in managed tmux
+                                # --attach: connect immediately after adopting
 
-cs kill <session_id_prefix>     # terminate a tmux session
+cs attach <id-or-name>          # reconnect to a tmux-backed session
+                                # auto-detects local vs remote from MongoDB
+                                # local: tmux attach-session -t <name>
+                                # local (inside tmux): tmux switch-client -t <name>
+                                # remote: ssh <machine> -t tmux attach -t <name>
+                                # accepts: ID prefix, /rename name, or title substring
+                                # ambiguous match: list matches, exit 1
+
+cs kill <id-or-name>            # terminate a tmux session
 
 cs resume                       # fzf-style interactive picker → claude --resume
 
@@ -150,11 +162,9 @@ cs last                         # resume most recent session on this machine
 cs status                       # live state of all tmux-backed sessions on this machine
                                 # color-coded: green=WORKING, yellow=WAITING, dim=IDLE, red=DEAD
 
-cs tag <session_id_prefix> <label>
-                                # partial session_id match (like git)
-                                # upserts tag field in MongoDB
+cs tag <id-or-name> <label>     # tag a session in MongoDB
 
-cs info <session_id_prefix>     # show full record for one session
+cs info <id-or-name>            # show full record for one session
 
 cs machines                     # list distinct machines with session counts and last seen
 ```
@@ -200,6 +210,7 @@ Stream JSONL files line-by-line to minimize memory usage (some sessions have
 thousands of messages). Only extract:
 - Line count (message_count)
 - First human message text (title)
+- `/rename` name from `agentName` field (takes priority as title if present)
 
 All parsing is defensive: malformed lines are skipped with a warning (verbose only),
 partial tail lines (mid-write race) are silently skipped. Wrap all parsing in
@@ -215,9 +226,17 @@ try-catch with graceful degradation.
 - Ambiguous session ID prefix: list matches and exit 1
 - Unknown command: print usage and exit 1
 
-## install.sh
+## Install
 
-A companion script that:
+### Remote one-liner (install-remote.sh)
+
+Downloads `cs.bundle.js` (single bundled JS file) to `~/.local/bin/cs`:
+```
+curl -sSL https://git.bogometer.com/shartman/claude-session/-/raw/main/install-remote.sh | bash
+```
+
+### From source (install.sh)
+
 1. Checks `bun --version` — errors with install instructions if missing
 2. Checks `tmux -V` — errors with install instructions if missing
 3. Creates `~/.config/cs/` (chmod 700) and stubs `config.json` (chmod 600) if not present
@@ -225,6 +244,12 @@ A companion script that:
 5. Symlinks `cs.ts` to `~/.local/bin/cs`
 6. Creates MongoDB indexes on first run
 7. Prints instructions for adding `cs sync --quiet &` to `.bashrc`
+
+### Build bundle
+
+```
+bun run build   # produces cs.bundle.js
+```
 
 ## What NOT to Build
 

@@ -57,29 +57,40 @@ Maximum number of results (default: 20).
 .RE
 .TP
 .BI "cs launch" " project [prompt]"
-Start Claude Code in a detached tmux session named
-.IR cs-<id> .
+Start Claude Code in a detached tmux session.
 The session persists across SSH disconnects. If
 .I prompt
 is provided, it is passed to Claude as the initial message.
 .TP
-.BI "cs attach" " id-prefix"
-Reconnect to a session by ID prefix. If the session is on the local machine,
-attaches to the tmux session directly. If on a remote machine, executes
+.BI "cs adopt" " id-or-name [--attach]"
+Wrap an existing Claude session in a managed tmux session. The session is
+resumed via
+.B claude --resume
+inside a detached tmux. With
+.BR --attach ,
+connects immediately after adopting.
+.TP
+.BI "cs attach" " id-or-name"
+Reconnect to a session. If the session is on the local machine,
+attaches to the tmux session directly. If already inside tmux, uses
+.B switch-client
+to avoid nesting. If on a remote machine, executes
 .BR ssh (1)
 to the remote host and attaches there. Requires SSH key authentication for
 remote sessions.
 .PP
 .RS
-Prefix matching works like
-.BR git (1)
-\(em type enough characters to be unique. If the prefix is ambiguous,
+Sessions can be identified by ID prefix (like
+.BR git (1)),
+.B /rename
+name (exact match), or title substring (case-insensitive). If the match is
+ambiguous,
 .B cs
 lists all matches and exits.
 .RE
 .TP
-.BI "cs kill" " id-prefix"
-Terminate a tmux session by ID prefix.
+.BI "cs kill" " id-or-name"
+Terminate a tmux session.
 .TP
 .B cs resume
 Interactive session picker using
@@ -113,13 +124,13 @@ MongoDB. States are color-coded:
 (red) tmux session no longer exists.
 .RE
 .TP
-.BI "cs tag" " id-prefix label"
+.BI "cs tag" " id-or-name label"
 Apply a text label to a session. Tags are stored in MongoDB and displayed
 in
 .B cs list
 output.
 .TP
-.BI "cs info" " id-prefix"
+.BI "cs info" " id-or-name"
 Display the full record for a single session, including session ID, machine,
 project path, title, tag, state, message count, timestamps, tmux session name,
 summary, and schema version.
@@ -134,7 +145,10 @@ Display usage summary and exit.
 Sessions are automatically titled from the first human message in the
 conversation. For example, if you started a session by typing "fix the nginx
 config", that becomes the session title displayed in listings and the
-dashboard.
+dashboard. If a session name is set via
+.B /rename
+in Claude Code, that name takes priority and is also used as the tmux
+session name.
 .SH CONFIGURATION
 Configuration is read from
 .IR ~/.config/cs/config.json :
