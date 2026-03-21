@@ -12,11 +12,26 @@ MAN_DIR="$HOME/.local/share/man/man1"
 echo "cs — Claude Session Manager (remote install)"
 echo
 
-# Check bun
+# Install bun if missing
 if ! command -v bun &>/dev/null; then
-  echo "ERROR: bun is not installed."
-  echo "Install it with: curl -fsSL https://bun.sh/install | bash"
-  exit 1
+  echo "Installing bun..."
+  # Snapshot .bashrc — bun installer appends PATH export without asking
+  BASHRC="$HOME/.bashrc"
+  if [ -f "$BASHRC" ]; then
+    cp "$BASHRC" "$BASHRC.pre-bun"
+  fi
+  curl -fsSL https://bun.sh/install | bash
+  # Revert .bashrc — user's shell profile is version controlled
+  if [ -f "$BASHRC.pre-bun" ]; then
+    mv "$BASHRC.pre-bun" "$BASHRC"
+  fi
+  export BUN_INSTALL="$HOME/.bun"
+  export PATH="$BUN_INSTALL/bin:$PATH"
+  if ! command -v bun &>/dev/null; then
+    echo "ERROR: bun installation failed."
+    exit 1
+  fi
+  echo "  Installed bun (NOTE: .bashrc was NOT modified — add ~/.bun/bin to PATH in your own shell config)"
 fi
 echo "  bun $(bun --version)"
 
