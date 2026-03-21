@@ -26,8 +26,9 @@ activity, and sessions needing attention.
 .SH COMMANDS
 .TP
 .B cs
-Display the dashboard. Shows active tmux sessions with live state, and recent
-sessions from MongoDB. Falls back to tmux-only display if MongoDB is unreachable.
+Display the local dashboard. Shows a single merged table of this machine's
+sessions with live tmux state overlaid on database records. No duplicates.
+Falls back to tmux-only display if MongoDB is unreachable.
 .TP
 .BI "cs sync" " [--quiet]"
 Harvest session metadata from

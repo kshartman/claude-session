@@ -124,8 +124,8 @@ produce `null` (not an error).
 ## Commands
 
 ```
-cs                              # smart dashboard: active sessions, recent, waiting
-                                # color-coded by state and machine
+cs                              # local dashboard: merged tmux + DB table for this machine
+                                # live state overlaid, deduped, silent DB fallback
 
 cs sync [--quiet]               # harvest ~/.claude/projects/ → upsert to MongoDB
                                 # detect tmux sessions and update state

@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.1.1";
+var VERSION = "1.2.0";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -28797,7 +28797,7 @@ async function tmuxListSessions() {
     if (!line.trim())
       continue;
     const [name, attached] = line.split(":");
-    if (name?.startsWith("cs-")) {
+    if (name) {
       sessions.set(name, { name, attached: attached === "1" });
     }
   }
@@ -28941,36 +28941,62 @@ async function cmdDashboard(config) {
     liveStates.set(name, await detectLiveState(name));
   }
   const dbSessions = await tryWithDb(config, async (_db, sessions) => {
-    return sessions.find({ machine, deleted_at: null }).sort({ updated_at: -1 }).limit(10).toArray();
+    return sessions.find({ machine, deleted_at: null }).sort({ updated_at: -1 }).limit(15).toArray();
   });
   console.log(bold(`  Claude Session Manager
 `));
-  if (tmuxSessions.size > 0) {
-    console.log(bold("Active Sessions:"));
-    for (const [name, info] of tmuxSessions) {
-      const state = liveStates.get(name);
-      const attached = info.attached ? cyan(" (attached)") : "";
-      console.log(`  ${name}  ${stateColor(state ?? null)}${attached}`);
+  const headers = ["PROJECT", "ID", "STATE", "UPDATED", "TITLE"];
+  const colWidths = [14, 8, 8, 10, 30];
+  if (dbSessions) {
+    const seenTmux = new Set;
+    const rows = dbSessions.map((s) => {
+      let state = s.state ?? null;
+      if (s.tmux_session && liveStates.has(s.tmux_session)) {
+        state = liveStates.get(s.tmux_session) ?? null;
+        seenTmux.add(s.tmux_session);
+      } else if (s.title && liveStates.has(s.title)) {
+        state = liveStates.get(s.title) ?? null;
+        seenTmux.add(s.title);
+      }
+      return [
+        staleText(s.project_name, s.updated_at),
+        dim(shortId(s.session_id)),
+        stateColor(state),
+        relativeTime(s.updated_at),
+        staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at)
+      ];
+    });
+    for (const [name] of tmuxSessions) {
+      if (!seenTmux.has(name)) {
+        rows.unshift([
+          dim("\u2014"),
+          dim("\u2014"),
+          stateColor(liveStates.get(name) ?? null),
+          dim("live"),
+          name
+        ]);
+      }
     }
-    console.log();
-  }
-  if (dbSessions && dbSessions.length > 0) {
-    console.log(bold("Recent Sessions:"));
-    const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
-    const colWidths = [14, 8, 14, 8, 10, 30];
-    const rows = dbSessions.map((s) => [
-      staleText(s.project_name, s.updated_at),
-      dim(shortId(s.session_id)),
-      machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]),
-      s.tmux_session && liveStates.has(s.tmux_session) ? stateColor(liveStates.get(s.tmux_session) ?? null) : stateColor(s.state ?? null),
-      relativeTime(s.updated_at),
-      staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at)
-    ]);
-    console.log(formatTable(headers, rows, colWidths));
-  } else if (!dbSessions) {
-    console.log(dim("  MongoDB unreachable \u2014 showing local tmux sessions only"));
+    if (rows.length > 0) {
+      console.log(formatTable(headers, rows, colWidths));
+    } else {
+      console.log(dim("  No sessions found. Run 'cs sync' to import."));
+    }
   } else {
-    console.log(dim("  No sessions found. Run 'cs sync' to import."));
+    console.log(dim(`  MongoDB unreachable \u2014 showing local tmux only
+`));
+    if (tmuxSessions.size > 0) {
+      const rows = [...tmuxSessions.entries()].map(([name, info]) => [
+        dim("\u2014"),
+        dim("\u2014"),
+        stateColor(liveStates.get(name) ?? null),
+        info.attached ? cyan("attached") : dim("detached"),
+        name
+      ]);
+      console.log(formatTable(headers, rows, colWidths));
+    } else {
+      console.log(dim("  No active sessions."));
+    }
   }
 }
 async function cmdList(config, opts) {

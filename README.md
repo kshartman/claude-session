@@ -50,7 +50,7 @@ This silently syncs sessions every time you open a terminal.
 
 ### `cs`
 
-Show the dashboard — active tmux sessions, recent sessions, anything needing attention. Works even if MongoDB is down (shows local tmux sessions only).
+Show the local dashboard — a single merged table of this machine's sessions with live tmux state overlaid on database records. No duplicates. Works even if MongoDB is down (shows local tmux sessions only).
 
 ### `cs sync [--quiet]`
 
