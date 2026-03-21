@@ -1278,9 +1278,14 @@ async function cmdUpdate(): Promise<void> {
       const cron = Bun.spawnSync(["bash", "-c", "crontab -l 2>/dev/null"]);
       const cronOut = cron.stdout.toString();
       if (!cronOut.includes("cs sync")) {
-        const cronCmd = `*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null`;
-        Bun.spawnSync(["bash", "-c", `(crontab -l 2>/dev/null; echo '${cronCmd}') | crontab -`]);
-        console.log(`Added cron: sync every 5 minutes`);
+        const cronLine = '*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null';
+        const script = `existing=$(crontab -l 2>/dev/null)\nprintf '%s\\n%s\\n' "$existing" '${cronLine}' | crontab -`;
+        const result = Bun.spawnSync(["bash", "-c", script]);
+        if (result.exitCode === 0) {
+          console.log(`Added cron: sync every 5 minutes`);
+        } else {
+          console.log(dim(`Could not add cron entry — add manually: ${cronLine}`));
+        }
       }
     }
   } catch {
