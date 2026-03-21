@@ -41,3 +41,16 @@ than copy-pasting UUIDs.
 (e.g., source from .bashrc). Bun may have completion generation helpers.
 **Effort:** S (CC ~15 min)
 **Depends on:** Core cs commands working.
+
+## P3 — Config sync on update
+When `cs update` runs, check if the remote config has new keys that the local
+config doesn't have. Warn or merge new defaults without overwriting existing values.
+
+**Why:** If a new version adds a config option that must be set, machines running
+`cs update` silently get the new binary but miss the config change.
+**Context:** Currently `cs update` only replaces the bundle and man page. Config
+is copied from a source host at install time (`scp` from `CS_CONFIG_HOST`) but
+never updated after that. A lightweight approach: fetch a `config.defaults.json`
+from the repo, diff keys against local config, print warnings for missing keys.
+**Effort:** S (CC ~15 min)
+**Depends on:** A config change that actually requires propagation (none yet).
