@@ -29500,74 +29500,121 @@ async function cmdDeleted(config, opts) {
     console.log(formatTable(headers, rows, colWidths));
   });
 }
-async function cmdPurge(config, prefix, confirm) {
-  const session = await withDb(config, async (_db, sessions) => {
-    const all = await sessions.find({ $or: [
-      { session_id: { $regex: `^${escapeRegex(prefix)}` } },
-      { title: prefix },
-      { title: { $regex: escapeRegex(prefix), $options: "i" } }
-    ] }).toArray();
-    let matches = all.filter((r) => r.session_id.startsWith(prefix));
-    if (matches.length === 0)
-      matches = all;
-    if (matches.length === 0) {
-      console.error(`No session found matching '${prefix}'`);
-      process.exit(1);
-    }
-    if (matches.length > 1) {
-      console.error(`Ambiguous match for '${prefix}'. Did you mean:`);
-      for (const m of matches) {
-        console.error(`  ${m.project_name}  ${m.session_id}  ${m.machine}  ${m.title ?? ""}`);
-      }
-      process.exit(1);
-    }
-    return matches[0];
-  });
-  const claudeDir = join2(homedir2(), ".claude", "projects");
+function purgeOneSession(session, claudeDir) {
   const pathHash = `-${session.project_path.slice(1).replace(/[/.]/g, "-")}`;
   const jsonlPath = join2(claudeDir, pathHash, `${session.session_id}.jsonl`);
   const sessionDir = join2(claudeDir, pathHash, session.session_id);
-  const isLocal = session.machine === hostname();
-  if (!confirm) {
-    console.log(`Would purge:
-`);
-    console.log(`  Session:  ${session.title ?? shortId(session.session_id)}`);
-    console.log(`  Host:     ${session.machine}`);
-    console.log(`  Project:  ${session.project_path}`);
-    console.log(`  JSONL:    ${existsSync2(jsonlPath) ? jsonlPath : dim("(not on this host)")}`);
-    console.log(`  Dir:      ${existsSync2(sessionDir) ? sessionDir : dim("(not on this host)")}`);
-    console.log(`  MongoDB:  record will be deleted`);
-    if (!isLocal) {
-      console.log(yellow(`
-  WARNING: session is on ${session.machine} \u2014 run cs purge there to delete files`));
-    }
-    console.log(`
-Run with --yes to confirm.`);
-    return;
-  }
-  if (!isLocal) {
-    console.error(`Cannot purge: session is on ${session.machine}, not this host.`);
-    console.error(`SSH to ${session.machine} and run cs purge there.`);
-    process.exit(1);
-  }
-  if (session.tmux_session) {
-    await tmuxRun("kill-session", "-t", session.tmux_session);
-  }
-  const tmuxSession = tmuxName(session.session_id, session.title, session.project_name);
-  await tmuxRun("kill-session", "-t", tmuxSession);
-  const { rmSync } = await import("fs");
+  const deleted = [];
+  const { rmSync } = __require("fs");
   if (existsSync2(jsonlPath)) {
     rmSync(jsonlPath);
-    console.log(`  Deleted ${jsonlPath}`);
+    deleted.push(jsonlPath);
   }
   if (existsSync2(sessionDir)) {
     rmSync(sessionDir, { recursive: true });
-    console.log(`  Deleted ${sessionDir}/`);
+    deleted.push(sessionDir + "/");
   }
+  const tmuxSession = tmuxName(session.session_id, session.title, session.project_name);
+  Bun.spawnSync(["tmux", "kill-session", "-t", tmuxSession], { stdout: "pipe", stderr: "pipe" });
+  if (session.tmux_session) {
+    Bun.spawnSync(["tmux", "kill-session", "-t", session.tmux_session], { stdout: "pipe", stderr: "pipe" });
+  }
+  return { jsonlPath, sessionDir, deleted };
+}
+async function cmdPurge(config, pattern, confirm, all) {
+  const machine = hostname();
+  const claudeDir = join2(homedir2(), ".claude", "projects");
   await withDb(config, async (_db, sessions) => {
-    await sessions.deleteOne({ session_id: session.session_id, machine: session.machine });
+    let matches;
+    if (all) {
+      matches = await sessions.find({
+        machine,
+        $or: [
+          { session_id: { $regex: `^${escapeRegex(pattern)}` } },
+          { title: { $regex: escapeRegex(pattern), $options: "i" } },
+          { project_name: { $regex: escapeRegex(pattern), $options: "i" } }
+        ]
+      }).toArray();
+    } else {
+      const found = await sessions.find({ $or: [
+        { session_id: { $regex: `^${escapeRegex(pattern)}` } },
+        { title: pattern },
+        { project_name: pattern },
+        { title: { $regex: `^${escapeRegex(pattern)}`, $options: "i" } }
+      ] }).toArray();
+      let filtered = found.filter((r) => r.session_id.startsWith(pattern));
+      if (filtered.length === 0)
+        filtered = found;
+      if (filtered.length === 0) {
+        console.error(`No session found matching '${pattern}'`);
+        process.exit(1);
+      }
+      if (filtered.length > 1) {
+        const local = filtered.filter((m) => m.machine === machine);
+        if (local.length === 1) {
+          matches = local;
+        } else {
+          console.error(`Ambiguous match for '${pattern}'. Did you mean:`);
+          for (const m of filtered) {
+            console.error(`  ${m.project_name}  ${m.session_id}  ${m.machine}  ${m.title ?? ""}`);
+          }
+          process.exit(1);
+        }
+      } else {
+        matches = filtered;
+      }
+    }
+    if (matches.length === 0) {
+      console.log(`No sessions matching '${pattern}' on this host.`);
+      return;
+    }
+    const nonLocal = matches.filter((m) => m.machine !== machine);
+    if (nonLocal.length > 0 && confirm) {
+      console.error(`Cannot purge ${nonLocal.length} session(s) on other hosts. Run cs purge there.`);
+      const localOnly = matches.filter((m) => m.machine === machine);
+      if (localOnly.length === 0)
+        process.exit(1);
+      matches = localOnly;
+    }
+    console.log(`${all ? "Bulk purge" : "Purge"} ${matches.length} session(s) matching '${pattern}':
+`);
+    for (const s of matches) {
+      const pathHash = `-${s.project_path.slice(1).replace(/[/.]/g, "-")}`;
+      const jsonlPath = join2(claudeDir, pathHash, `${s.session_id}.jsonl`);
+      const local = s.machine === machine;
+      console.log(`  ${s.project_name}  ${s.session_id.slice(0, 14)}  ${s.machine}  ${s.title ?? "(no title)"}  ${local && existsSync2(jsonlPath) ? "files: yes" : dim("files: no")}`);
+    }
+    if (!confirm) {
+      if (nonLocal.length > 0) {
+        console.log(yellow(`
+  ${nonLocal.length} session(s) on other hosts \u2014 run cs purge there`));
+      }
+      console.log(`
+Run with --yes to confirm.`);
+      return;
+    }
+    if (all && matches.length > 1) {
+      process.stdout.write(`
+Type YES to permanently delete ${matches.length} sessions: `);
+      const buf = Buffer.alloc(10);
+      const n = __require("fs").readSync(0, buf, 0, 10);
+      const answer = buf.slice(0, n).toString().trim();
+      if (answer !== "YES") {
+        console.log("Aborted.");
+        return;
+      }
+    }
+    let purged = 0;
+    for (const s of matches.filter((m) => m.machine === machine)) {
+      const result = purgeOneSession(s, claudeDir);
+      await sessions.deleteOne({ session_id: s.session_id, machine: s.machine });
+      for (const f of result.deleted)
+        console.log(`  Deleted ${f}`);
+      purged++;
+    }
+    console.log(`
+Purged ${red(String(purged))} session(s).`);
   });
-  console.log(`  Purged ${red(session.title ?? shortId(session.session_id))} from ${session.machine}`);
 }
 var BASE_URL = process.env["CS_REPO_URL"] ?? "https://git.bogometer.com/shartman/claude-session/-/raw/main";
 function ensureCron() {
@@ -29657,7 +29704,8 @@ ${bold("Usage:")}
   cs rm --undo <id-or-name>       Restore a soft-deleted session
   cs prune [--days N] [--all]     Bulk soft-delete unnamed/untagged sessions
   cs deleted                      List soft-deleted sessions
-  cs purge <id-or-name> [--yes]   Hard delete session + local files (irreversible)
+  cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
+  cs purge <pattern> --all [--yes] Bulk hard delete matching sessions
   cs update                       Update cs to latest version
   cs version                      Show current version
 
@@ -29819,12 +29867,13 @@ async function main() {
     }
     case "purge": {
       const yes = args.includes("--yes");
-      const prefix = args.filter((a) => a !== "--yes")[1];
-      if (!prefix) {
-        console.error("Usage: cs purge <id-or-name> [--yes]");
+      const all = args.includes("--all");
+      const pattern = args.filter((a) => !a.startsWith("--"))[1];
+      if (!pattern) {
+        console.error("Usage: cs purge <pattern> [--yes] [--all]");
         process.exit(1);
       }
-      await cmdPurge(config, prefix, yes);
+      await cmdPurge(config, pattern, yes, all);
       break;
     }
     default:
