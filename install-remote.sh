@@ -15,16 +15,15 @@ echo
 # Install bun if missing
 if ! command -v bun &>/dev/null; then
   echo "Installing bun..."
-  # Snapshot .bashrc — bun installer appends PATH export without asking
-  BASHRC="$HOME/.bashrc"
-  if [ -f "$BASHRC" ]; then
-    cp "$BASHRC" "$BASHRC.pre-bun"
-  fi
+  # Snapshot shell profiles — bun installer appends PATH export without asking
+  for f in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zshrc"; do
+    [ -f "$f" ] && cp "$f" "$f.pre-bun"
+  done
   curl -fsSL https://bun.sh/install | bash
-  # Revert .bashrc — user's shell profile is version controlled
-  if [ -f "$BASHRC.pre-bun" ]; then
-    mv "$BASHRC.pre-bun" "$BASHRC"
-  fi
+  # Revert all shell profiles — user's dotfiles may be version controlled
+  for f in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zshrc"; do
+    [ -f "$f.pre-bun" ] && mv "$f.pre-bun" "$f"
+  done
   export BUN_INSTALL="$HOME/.bun"
   export PATH="$BUN_INSTALL/bin:$PATH"
   if ! command -v bun &>/dev/null; then
