@@ -29101,6 +29101,10 @@ async function configureTmuxBar(config, tmuxSession) {
   if (config.showDetachHint) {
     const hint = await getDetachHint();
     statusLeft += ` detach: ${hint}`;
+    const mouseResult = await tmuxRun("show-options", "-gv", "mouse");
+    if (mouseResult.exitCode === 0 && mouseResult.stdout.trim() === "on") {
+      statusLeft += ` | mouse: shift+click`;
+    }
   }
   await tmuxRun("set-option", "-t", tmuxSession, "status-left-length", "80");
   await tmuxRun("set-option", "-t", tmuxSession, "status-left", ` ${statusLeft}`);

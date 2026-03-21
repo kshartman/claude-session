@@ -562,6 +562,11 @@ async function configureTmuxBar(
   if (config.showDetachHint) {
     const hint = await getDetachHint();
     statusLeft += ` detach: ${hint}`;
+    // Check if mouse mode is on
+    const mouseResult = await tmuxRun("show-options", "-gv", "mouse");
+    if (mouseResult.exitCode === 0 && mouseResult.stdout.trim() === "on") {
+      statusLeft += ` | mouse: shift+click`;
+    }
   }
 
   await tmuxRun("set-option", "-t", tmuxSession, "status-left-length", "80");
