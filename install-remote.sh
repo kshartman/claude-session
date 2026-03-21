@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
-# One-liner install: curl -sSL https://git.bogometer.com/shartman/claude-session/-/raw/main/install-remote.sh | bash
+# One-liner install: curl -sSL https://git.bogometer.com/shartman/claude-session/-/raw/main/install-remote.sh | bash -s -- [--nocron] [--noconfig]
 set -euo pipefail
+
+OPT_NOCRON=false
+OPT_NOCONFIG=false
+for arg in "$@"; do
+  case "$arg" in
+    --nocron)   OPT_NOCRON=true ;;
+    --noconfig) OPT_NOCONFIG=true ;;
+  esac
+done
 
 BIN_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/cs"
@@ -61,8 +70,10 @@ if [ ! -d "$CONFIG_DIR" ]; then
 fi
 
 # Copy config from a source host if available, otherwise stub it
-CONFIG_SOURCE="${CS_CONFIG_HOST:-cs}"
-if [ ! -f "$CONFIG_FILE" ]; then
+if [ "$OPT_NOCONFIG" = true ]; then
+  echo "  Config copy skipped (--noconfig)"
+elif [ ! -f "$CONFIG_FILE" ]; then
+  CONFIG_SOURCE="${CS_CONFIG_HOST:-cs}"
   if scp -q "$CONFIG_SOURCE:~/.config/cs/config.json" "$CONFIG_FILE" 2>/dev/null; then
     chmod 600 "$CONFIG_FILE"
     echo "  Copied config from $CONFIG_SOURCE"
@@ -80,10 +91,10 @@ else
   echo "  Config exists at $CONFIG_FILE"
 fi
 
-# Set up cron sync if not already present (unless noCron in config)
+# Set up cron sync if not already present (unless --nocron or noCron in config)
 NO_CRON=$(grep -o '"noCron":\s*true' "$CONFIG_FILE" 2>/dev/null || true)
-if [ -n "$NO_CRON" ]; then
-  echo "  Cron sync disabled (noCron in config)"
+if [ "$OPT_NOCRON" = true ] || [ -n "$NO_CRON" ]; then
+  echo "  Cron sync skipped"
 else
   CRON_CMD="PATH=\"\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH\" cs sync --quiet 2>/dev/null"
   if crontab -l 2>/dev/null | grep -q "cs sync"; then
