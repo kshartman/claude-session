@@ -131,9 +131,9 @@ cs sync [--quiet]               # harvest ~/.claude/projects/ → upsert to Mong
                                 # detect tmux sessions and update state
                                 # --quiet suppresses output (for .bashrc login hook)
 
-cs list [--all] [--machine <h>] [--project <name>] [--limit <n>]
-                                # default: current machine, sorted by updated_at desc
-                                # --all: all machines
+cs list [--local] [--host <h>] [--project <name>] [--limit <n>]
+                                # default: all hosts, sorted by updated_at desc
+                                # --local: this host only
                                 # output: table with columns:
                                 #   MACHINE | PROJECT | TITLE | TAG | STATE | UPDATED | ID
 

@@ -39,16 +39,16 @@ suppresses all output (suitable for
 .I .bashrc
 login hooks).
 .TP
-.BI "cs list" " [--all] [--machine host] [--project name] [--limit n]"
-List sessions in a table sorted by most recently updated. Defaults to
-current machine. Options:
+.BI "cs list" " [--local] [--host name] [--project name] [--limit n]"
+List sessions from the database sorted by most recently updated. Defaults to
+all hosts. Options:
 .RS
 .TP
-.B --all
-Show sessions from all machines.
+.B --local
+Show sessions from this host only.
 .TP
-.BI --machine " host"
-Filter to a specific machine hostname.
+.BI --host " name"
+Filter to a specific host.
 .TP
 .BI --project " name"
 Filter by project name.

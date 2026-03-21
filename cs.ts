@@ -392,16 +392,18 @@ async function cmdDashboard(config: CsConfig): Promise<void> {
 async function cmdList(
   config: CsConfig,
   opts: {
-    all: boolean;
-    machine: string | null;
+    local: boolean;
+    host: string | null;
     project: string | null;
     limit: number;
   }
 ): Promise<void> {
   await withDb(config, async (_db, sessions) => {
     const filter: Record<string, unknown> = {};
-    if (!opts.all) {
-      filter["machine"] = opts.machine ?? hostname();
+    if (opts.local) {
+      filter["machine"] = hostname();
+    } else if (opts.host) {
+      filter["machine"] = opts.host;
     }
     if (opts.project) {
       filter["project_name"] = opts.project;
@@ -1107,8 +1109,8 @@ ${bold("Usage:")}
   cs version                      Show current version
 
 ${bold("List options:")}
-  --all                           Show all machines
-  --machine <hostname>            Filter by machine
+  --local                         This host only
+  --host <hostname>               Filter by host
   --project <name>                Filter by project
   --limit <n>                     Max results (default: 20)`);
 }
@@ -1166,17 +1168,17 @@ async function main(): Promise<void> {
     }
 
     case "list": {
-      const all = args.includes("--all");
-      const machineIdx = args.indexOf("--machine");
-      const machine =
-        machineIdx >= 0 ? (args[machineIdx + 1] ?? null) : null;
+      const local = args.includes("--local");
+      const hostIdx = args.indexOf("--host");
+      const host =
+        hostIdx >= 0 ? (args[hostIdx + 1] ?? null) : null;
       const projectIdx = args.indexOf("--project");
       const project =
         projectIdx >= 0 ? (args[projectIdx + 1] ?? null) : null;
       const limitIdx = args.indexOf("--limit");
       const limit =
         limitIdx >= 0 ? parseInt(args[limitIdx + 1] ?? "20", 10) : 20;
-      await cmdList(config, { all, machine, project, limit });
+      await cmdList(config, { local, host, project, limit });
       break;
     }
 

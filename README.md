@@ -58,16 +58,16 @@ Scan `~/.claude/projects/` for session files and upsert metadata to MongoDB. Det
 
 `--quiet` suppresses output (for the `.bashrc` hook).
 
-### `cs list [--all] [--machine <host>] [--project <name>] [--limit <n>]`
+### `cs list [--local] [--host <name>] [--project <name>] [--limit <n>]`
 
-List sessions in a table. Defaults to current machine, sorted by most recent.
+List sessions from the database. Defaults to all hosts, sorted by most recent.
 
 ```bash
-cs list                        # this machine
-cs list --all                  # all machines
+cs list                        # all hosts
+cs list --local                # this host only
+cs list --host dev             # specific host
 cs list --project trading      # filter by project
 cs list --limit 5              # show 5 most recent
-cs list --machine webserver    # specific machine
 ```
 
 ### `cs launch <project> [prompt]`
