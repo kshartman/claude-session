@@ -560,16 +560,28 @@ async function configureTmuxBar(
 
   let statusLeft = `[${tmuxSession}]`;
   if (config.showDetachHint) {
-    const hint = await getDetachHint();
-    statusLeft += ` detach: ${hint}`;
-    // Check if mouse mode is on
+    const prefixResult = await tmuxRun("show-options", "-gv", "prefix");
+    const prefix = prefixResult.exitCode === 0 && prefixResult.stdout ? prefixResult.stdout.trim() : "C-b";
+    const keyMap: Record<string, string> = {
+      "C-b": "Ctrl-b", "C-a": "Ctrl-a", "C-^": "Ctrl-6", "C-s": "Ctrl-s", "C-q": "Ctrl-q",
+    };
+    const pfx = keyMap[prefix] ?? prefix;
+
+    const hints: string[] = [];
+    hints.push(`help: ${pfx} ?`);
+    hints.push(`detach: ${pfx} d`);
+
     const mouseResult = await tmuxRun("show-options", "-gv", "mouse");
     if (mouseResult.exitCode === 0 && mouseResult.stdout.trim() === "on") {
-      statusLeft += ` | mouse: shift+click`;
+      hints.push(`mouse: shift+click`);
     }
+
+    hints.push(`scroll: ${pfx} [`);
+
+    statusLeft += ` ${hints.join(" | ")}`;
   }
 
-  await tmuxRun("set-option", "-t", tmuxSession, "status-left-length", "80");
+  await tmuxRun("set-option", "-t", tmuxSession, "status-left-length", "120");
   await tmuxRun("set-option", "-t", tmuxSession, "status-left", ` ${statusLeft}`);
 }
 
