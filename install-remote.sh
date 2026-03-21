@@ -60,15 +60,22 @@ if [ ! -d "$CONFIG_DIR" ]; then
   chmod 700 "$CONFIG_DIR"
 fi
 
-# Stub config if not present
+# Copy config from a source host if available, otherwise stub it
+CONFIG_SOURCE="${CS_CONFIG_HOST:-cs}"
 if [ ! -f "$CONFIG_FILE" ]; then
-  cat > "$CONFIG_FILE" << 'EOF'
+  if scp -q "$CONFIG_SOURCE:~/.config/cs/config.json" "$CONFIG_FILE" 2>/dev/null; then
+    chmod 600 "$CONFIG_FILE"
+    echo "  Copied config from $CONFIG_SOURCE"
+  else
+    cat > "$CONFIG_FILE" << 'EOF'
 {
   "mongoUri": "mongodb://user:password@your-mongo-host:27017/claude?authMechanism=SCRAM-SHA-256&tls=true"
 }
 EOF
-  chmod 600 "$CONFIG_FILE"
-  echo "  Created $CONFIG_FILE (edit with your credentials)"
+    chmod 600 "$CONFIG_FILE"
+    echo "  Created $CONFIG_FILE (edit with your credentials)"
+    echo "  TIP: Or set CS_CONFIG_HOST=<hostname> to copy config via scp"
+  fi
 else
   echo "  Config exists at $CONFIG_FILE"
 fi
