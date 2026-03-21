@@ -28923,9 +28923,14 @@ async function cmdSync(config, quiet) {
         }
       };
     });
+    if (ops.length === 0) {
+      if (!quiet)
+        console.log("No new sessions to sync (all deleted or filtered).");
+      return;
+    }
     const result = await sessions.bulkWrite(ops);
     if (!quiet) {
-      const total = records.length;
+      const total = ops.length;
       const upserted = result.upsertedCount;
       const modified = result.modifiedCount;
       console.log(`Synced ${total} sessions (${upserted} new, ${modified} updated)`);
