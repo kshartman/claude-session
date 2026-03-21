@@ -28951,7 +28951,7 @@ async function cmdDashboard(config) {
   console.log(bold(`  Claude Session Manager
 `));
   const headers = ["PROJECT", "ID", "STATE", "UPDATED", "TITLE"];
-  const colWidths = [12, 8, 8, 10, 30];
+  const colWidths = [12, 14, 8, 10, 30];
   if (dbSessions) {
     const seenTmux = new Set;
     const rows = dbSessions.map((s) => {
@@ -28968,7 +28968,7 @@ async function cmdDashboard(config) {
       const truncTitle = title.length > 30 ? title.slice(0, 29) + ">" : title;
       return [
         staleText(proj, s.updated_at),
-        dim(shortId(s.session_id)),
+        dim(s.session_id.slice(0, 14)),
         stateColor(state),
         relativeTime(s.updated_at),
         staleText(truncTitle, s.updated_at)
@@ -29024,14 +29024,14 @@ async function cmdList(config, opts) {
       return;
     }
     const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
-    const colWidths = [12, 8, 8, 8, 10, 30];
+    const colWidths = [12, 14, 8, 8, 10, 30];
     const rows = results.map((s) => {
       const proj = s.project_name.length > 12 ? s.project_name.slice(0, 11) + ">" : s.project_name;
       const title = s.title ?? "(no title)";
       const truncTitle = title.length > 30 ? title.slice(0, 29) + ">" : title;
       return [
         staleText(proj, s.updated_at),
-        dim(shortId(s.session_id)),
+        dim(s.session_id.slice(0, 14)),
         machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]),
         stateColor(s.state),
         relativeTime(s.updated_at),
@@ -29463,15 +29463,20 @@ async function cmdDeleted(config) {
       console.log("No deleted sessions.");
       return;
     }
-    const headers = ["HOST", "PROJECT", "TITLE", "DELETED", "ID"];
-    const colWidths = [14, 14, 30, 12, 8];
-    const rows = results.map((s) => [
-      machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]),
-      s.project_name,
-      s.title ?? dim("(no title)"),
-      relativeTime(s.deleted_at),
-      dim(shortId(s.session_id))
-    ]);
+    const headers = ["PROJECT", "ID", "HOST", "DELETED", "TITLE"];
+    const colWidths = [12, 14, 8, 10, 30];
+    const rows = results.map((s) => {
+      const proj = s.project_name.length > 12 ? s.project_name.slice(0, 11) + ">" : s.project_name;
+      const title = s.title ?? "(no title)";
+      const truncTitle = title.length > 30 ? title.slice(0, 29) + ">" : title;
+      return [
+        proj,
+        dim(s.session_id.slice(0, 14)),
+        machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]),
+        relativeTime(s.deleted_at),
+        truncTitle
+      ];
+    });
     console.log(formatTable(headers, rows, colWidths));
   });
 }
