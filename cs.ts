@@ -505,17 +505,24 @@ async function resolveSession(
 
     let matches = matchPrefix(byId, prefix);
 
-    // If no ID match, try by title (from /rename)
+    // Try exact title match (from /rename)
     if (matches.length === 0) {
       matches = await sessions
         .find({ title: prefix, deleted_at: null })
         .toArray();
     }
 
-    // Still nothing? Try title as substring (case-insensitive)
+    // Try exact project name match
     if (matches.length === 0) {
       matches = await sessions
-        .find({ title: { $regex: escapeRegex(prefix), $options: "i" }, deleted_at: null })
+        .find({ project_name: prefix, deleted_at: null })
+        .toArray();
+    }
+
+    // Last resort: title prefix (starts with, not substring)
+    if (matches.length === 0) {
+      matches = await sessions
+        .find({ title: { $regex: `^${escapeRegex(prefix)}`, $options: "i" }, deleted_at: null })
         .toArray();
     }
 

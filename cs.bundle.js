@@ -29068,7 +29068,10 @@ async function resolveSession(config, prefix) {
       matches = await sessions.find({ title: prefix, deleted_at: null }).toArray();
     }
     if (matches.length === 0) {
-      matches = await sessions.find({ title: { $regex: escapeRegex(prefix), $options: "i" }, deleted_at: null }).toArray();
+      matches = await sessions.find({ project_name: prefix, deleted_at: null }).toArray();
+    }
+    if (matches.length === 0) {
+      matches = await sessions.find({ title: { $regex: `^${escapeRegex(prefix)}`, $options: "i" }, deleted_at: null }).toArray();
     }
     if (matches.length === 0) {
       console.error(`No session found matching '${prefix}'`);
