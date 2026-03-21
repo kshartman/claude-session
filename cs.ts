@@ -587,7 +587,7 @@ async function cmdAttach(
       const create = await tmuxRun(
         "new-session", "-d", "-s", tmuxSession,
         "-c", session.project_path,
-        "claude", "--resume", session.session_id
+        "--", "claude", "--resume", session.session_id
       );
       if (create.exitCode !== 0) {
         console.error(`Failed to create tmux session: ${create.stdout}`);
@@ -612,10 +612,9 @@ async function cmdAttach(
     const sshCmd = [
       "ssh", session.machine, "-t",
       "bash", "-lc",
-      // Check if session exists; if not, create it with claude --resume
-      `tmux has-session -t ${tmuxSession} 2>/dev/null || ` +
-      `tmux new-session -d -s ${tmuxSession} -c ${session.project_path} claude --resume ${session.session_id}; ` +
-      `tmux attach-session -t ${tmuxSession}`,
+      `tmux has-session -t '${tmuxSession}' 2>/dev/null || ` +
+      `tmux new-session -d -s '${tmuxSession}' -c '${session.project_path}' -- claude --resume '${session.session_id}'; ` +
+      `tmux attach-session -t '${tmuxSession}'`,
     ];
     const proc = Bun.spawn(sshCmd, {
       stdin: "inherit",
