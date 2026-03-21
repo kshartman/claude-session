@@ -19,6 +19,7 @@ export interface SessionRecord {
   tmux_session: string | null;
   summary: string | null;
   synced_at: Date;
+  deleted_at: Date | null;
 }
 
 export interface CsConfig {
