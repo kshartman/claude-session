@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tgz
+
+# emacs
+*~
+\#*\#
+.#*
+
+# mac
+.DS_Store
+._*
