@@ -104,7 +104,7 @@ closes and the user returns to their local shell. The Claude session continues
 running on the remote host.
 
 Session identifiers can be: session ID prefix, `/rename` name (exact match),
-or title substring (case-insensitive).
+or title prefix (case-insensitive).
 
 ### State Detection
 
@@ -144,13 +144,14 @@ cs adopt <id-or-name> [--attach]
                                 # wrap existing session in managed tmux
                                 # --attach: connect immediately after adopting
 
-cs attach <id-or-name>          # reconnect to a tmux-backed session
+cs attach <id-or-name> [--host <h>]
+                                # reconnect to a tmux-backed session
                                 # auto-detects local vs remote from MongoDB
                                 # local: tmux attach-session -t <name>
                                 # local (inside tmux): tmux switch-client -t <name>
                                 # remote: ssh <machine> -t tmux attach -t <name>
-                                # accepts: ID prefix, /rename name, or title substring
-                                # ambiguous match: list matches, exit 1
+                                # accepts: ID prefix, /rename name, or project name
+                                # ambiguous: prefers local host, or use --host to pick
 
 cs kill <id-or-name>            # terminate a tmux session
 

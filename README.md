@@ -92,17 +92,18 @@ cs adopt claude-session --attach    # wrap and connect immediately
 cs adopt 952d --attach              # works with ID prefix too
 ```
 
-### `cs attach <id-or-name>`
+### `cs attach <id-or-name> [--host <name>]`
 
-Reconnect to a session. Works **across machines** — if the session is on a different host, cs automatically SSH's there.
+Reconnect to a session. Works **across machines** — if the session is on a different host, cs automatically SSH's there and creates the tmux session if needed.
 
 ```bash
 cs attach claude-session    # by /rename name
 cs attach 952d              # by ID prefix
 cs attach a4b9              # remote session — auto-SSH
+cs attach onepay --host dev # disambiguate when same name on multiple hosts
 ```
 
-You can use a session ID prefix (like git), a `/rename` name (exact match), or a title substring. If ambiguous, cs lists the matches.
+You can use a session ID prefix (like git), a `/rename` name (exact match), or a project name. If ambiguous, cs prefers the local host's session. Use `--host` to override.
 
 If you're already inside tmux, cs uses `switch-client` instead of nesting.
 

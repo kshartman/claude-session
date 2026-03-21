@@ -74,7 +74,7 @@ inside a detached tmux. With
 .BR --attach ,
 connects immediately after adopting.
 .TP
-.BI "cs attach" " id-or-name"
+.BI "cs attach" " id-or-name [--host name]"
 Reconnect to a session. If the session is on the local machine,
 attaches to the tmux session directly. If already inside tmux, uses
 .B switch-client
@@ -87,10 +87,11 @@ remote sessions.
 Sessions can be identified by ID prefix (like
 .BR git (1)),
 .B /rename
-name (exact match), or title substring (case-insensitive). If the match is
-ambiguous,
+name (exact match), or project name. When ambiguous,
 .B cs
-lists all matches and exits.
+prefers the local host's session. Use
+.B --host
+to disambiguate explicitly.
 .RE
 .TP
 .BI "cs kill" " id-or-name"
