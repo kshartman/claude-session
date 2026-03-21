@@ -472,6 +472,7 @@ async function cmdLaunch(
     tmuxSession,
     "-c",
     targetDir,
+    "--",
     ...claudeArgs
   );
 
@@ -895,6 +896,7 @@ async function cmdAdopt(
     tmuxSession,
     "-c",
     session.project_path,
+    "--",
     "claude",
     "--resume",
     session.session_id

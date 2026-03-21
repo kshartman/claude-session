@@ -29045,7 +29045,7 @@ async function cmdLaunch(_config, project, prompt) {
   const abs = project.startsWith("/") ? project : join2(process.cwd(), project);
   const targetDir = existsSync2(abs) ? abs : process.cwd();
   const tmuxSession = `cs-${basename(targetDir).slice(0, 20)}-${Date.now().toString(36)}`;
-  const result = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", targetDir, ...claudeArgs);
+  const result = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", targetDir, "--", ...claudeArgs);
   if (result.exitCode !== 0) {
     console.error(`Failed to create tmux session: ${result.stdout}`);
     process.exit(1);
@@ -29325,7 +29325,7 @@ async function cmdAdopt(config, prefix, attach) {
     }
   }
   const tmuxSession = tmuxName(session.session_id, session.title, session.project_name);
-  const result = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", session.project_path, "claude", "--resume", session.session_id);
+  const result = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", session.project_path, "--", "claude", "--resume", session.session_id);
   if (result.exitCode !== 0) {
     console.error(`Failed to create tmux session: ${result.stdout}`);
     process.exit(1);
