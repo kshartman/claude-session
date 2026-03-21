@@ -28732,7 +28732,7 @@ function formatTable(headers, rows, colWidths) {
 }
 function tmuxName(sessionId, title, projectName) {
   if (title) {
-    return title.replace(/[.:]/g, "-").slice(0, 40);
+    return title.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
   }
   if (projectName) {
     return `${projectName}-${shortId(sessionId)}`;

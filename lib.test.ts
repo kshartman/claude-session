@@ -127,8 +127,9 @@ describe("tmuxName", () => {
     expect(tmuxName("abc12345-6789-0000-0000-000000000000", null, null)).toBe("abc12345");
   });
 
-  test("sanitizes dots and colons in title", () => {
+  test("sanitizes special chars in title", () => {
     expect(tmuxName("abc12345-6789-0000-0000-000000000000", "my.session:v2", "proj")).toBe("my-session-v2");
+    expect(tmuxName("abc12345-6789-0000-0000-000000000000", "read this project, understand", "proj")).toBe("read-this-project-understand");
   });
 });
 

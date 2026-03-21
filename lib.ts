@@ -432,8 +432,8 @@ export function tmuxName(
   projectName: string | null
 ): string {
   if (title) {
-    // Sanitize for tmux (no dots or colons — tmux uses these as separators)
-    return title.replace(/[.:]/g, "-").slice(0, 40);
+    // Sanitize for tmux (no spaces, dots, colons, or special chars)
+    return title.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
   }
   if (projectName) {
     return `${projectName}-${shortId(sessionId)}`;
