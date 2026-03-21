@@ -158,8 +158,8 @@ Display the full record for a single session, including session ID, machine,
 project path, title, tag, state, message count, timestamps, tmux session name,
 summary, and schema version.
 .TP
-.B cs machines
-List all machines that have synced sessions, with session counts and last
+.B cs hosts
+List all hosts that have synced sessions, with session counts and last
 seen timestamps.
 .TP
 .B cs update
@@ -239,12 +239,12 @@ cs attach a3f7
 .fi
 .RE
 .PP
-See what's running across all machines:
+See what's running across all hosts:
 .PP
 .RS
 .nf
 cs list
-cs machines
+cs hosts
 .fi
 .RE
 .PP

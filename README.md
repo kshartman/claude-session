@@ -146,9 +146,9 @@ Tags are stored in MongoDB and show up in `cs list`.
 
 Full details for a single session: ID, machine, project, title, tag, state, message count, timestamps, and schema version.
 
-### `cs machines`
+### `cs hosts`
 
-List all machines that have synced sessions, with session counts and when each was last seen.
+List all hosts that have synced sessions, with session counts and when each was last seen.
 
 ### `cs rm <id-or-name>`
 
