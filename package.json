@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "bun test",
-    "check": "bun x tsc --noEmit"
+    "check": "bun x tsc --noEmit",
+    "build": "bun build cs.ts --outfile cs.bundle.js --target bun"
   },
   "dependencies": {
     "mongodb": "^6.12.0"
