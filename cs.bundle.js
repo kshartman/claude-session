@@ -28890,7 +28890,8 @@ async function cmdSync(config, quiet) {
           state,
           tmux_session: tmuxInfo ? tmuxSessionName : null,
           summary,
-          synced_at: new Date
+          synced_at: new Date,
+          deleted_at: null
         });
       } catch (err) {
         if (!quiet)
@@ -28905,14 +28906,16 @@ async function cmdSync(config, quiet) {
   }
   await withDb(config, async (_db, sessions) => {
     await ensureIndexes(sessions);
-    const ops = records.map((rec) => {
-      const { tag: _tag, ...rest } = rec;
+    const deleted = await sessions.find({ machine: records[0]?.machine, deleted_at: { $ne: null } }).project({ session_id: 1 }).toArray();
+    const deletedIds = new Set(deleted.map((d) => d.session_id));
+    const ops = records.filter((rec) => !deletedIds.has(rec.session_id)).map((rec) => {
+      const { tag: _tag, deleted_at: _del, ...rest } = rec;
       return {
         updateOne: {
           filter: { session_id: rec.session_id, machine: rec.machine },
           update: {
             $set: rest,
-            $setOnInsert: { tag: null }
+            $setOnInsert: { tag: null, deleted_at: null }
           },
           upsert: true
         }
@@ -28936,7 +28939,7 @@ async function cmdDashboard(config) {
     liveStates.set(name, await detectLiveState(name));
   }
   const dbSessions = await tryWithDb(config, async (_db, sessions) => {
-    return sessions.find({ machine }).sort({ updated_at: -1 }).limit(10).toArray();
+    return sessions.find({ machine, deleted_at: null }).sort({ updated_at: -1 }).limit(10).toArray();
   });
   console.log(bold(`  Claude Session Manager
 `));
@@ -28976,7 +28979,7 @@ async function cmdList(config, opts) {
     if (opts.project) {
       filter["project_name"] = opts.project;
     }
-    const results = await sessions.find(filter).sort({ updated_at: -1 }).limit(opts.limit).toArray();
+    const results = await sessions.find({ ...filter, deleted_at: null }).sort({ updated_at: -1 }).limit(opts.limit).toArray();
     if (results.length === 0) {
       console.log("No sessions found.");
       return;
@@ -29015,13 +29018,13 @@ async function cmdLaunch(_config, project, prompt) {
 }
 async function resolveSession(config, prefix) {
   return withDb(config, async (_db, sessions) => {
-    const byId = await sessions.find({ session_id: { $regex: `^${escapeRegex(prefix)}` } }).toArray();
+    const byId = await sessions.find({ session_id: { $regex: `^${escapeRegex(prefix)}` }, deleted_at: null }).toArray();
     let matches = matchPrefix(byId, prefix);
     if (matches.length === 0) {
-      matches = await sessions.find({ title: prefix }).toArray();
+      matches = await sessions.find({ title: prefix, deleted_at: null }).toArray();
     }
     if (matches.length === 0) {
-      matches = await sessions.find({ title: { $regex: escapeRegex(prefix), $options: "i" } }).toArray();
+      matches = await sessions.find({ title: { $regex: escapeRegex(prefix), $options: "i" }, deleted_at: null }).toArray();
     }
     if (matches.length === 0) {
       console.error(`No session found matching '${prefix}'`);
@@ -29109,7 +29112,7 @@ Install it with: sudo apt install fzf`);
   }
   const machine = hostname();
   await withDb(config, async (_db, sessions) => {
-    const results = await sessions.find({ machine }).sort({ updated_at: -1 }).limit(50).toArray();
+    const results = await sessions.find({ machine, deleted_at: null }).sort({ updated_at: -1 }).limit(50).toArray();
     if (results.length === 0) {
       console.log("No sessions found. Run 'cs sync' first.");
       return;
@@ -29142,7 +29145,7 @@ Install it with: sudo apt install fzf`);
 async function cmdLast(config) {
   const machine = hostname();
   await withDb(config, async (_db, sessions) => {
-    const latest = await sessions.find({ machine }).sort({ updated_at: -1 }).limit(1).toArray();
+    const latest = await sessions.find({ machine, deleted_at: null }).sort({ updated_at: -1 }).limit(1).toArray();
     if (latest.length === 0) {
       console.log("No sessions found. Run 'cs sync' first.");
       return;
@@ -29181,7 +29184,7 @@ async function cmdStatus() {
 }
 async function cmdTag(config, prefix, label) {
   await withDb(config, async (_db, sessions) => {
-    const all = await sessions.find({ session_id: { $regex: `^${escapeRegex(prefix)}` } }).toArray();
+    const all = await sessions.find({ session_id: { $regex: `^${escapeRegex(prefix)}` }, deleted_at: null }).toArray();
     const matches = matchPrefix(all, prefix);
     if (matches.length === 0) {
       console.error(`No session found matching prefix '${prefix}'`);
@@ -29293,6 +29296,84 @@ async function cmdAdopt(config, prefix, attach) {
     console.log(`Attach with: ${bold(`cs attach ${shortId(session.session_id)}`)}`);
   }
 }
+async function cmdRm(config, prefix, undo) {
+  await withDb(config, async (_db, sessions) => {
+    const filter = undo ? { $or: [
+      { session_id: { $regex: `^${escapeRegex(prefix)}` } },
+      { title: prefix },
+      { title: { $regex: escapeRegex(prefix), $options: "i" } }
+    ] } : { $or: [
+      { session_id: { $regex: `^${escapeRegex(prefix)}` }, deleted_at: null },
+      { title: prefix, deleted_at: null },
+      { title: { $regex: escapeRegex(prefix), $options: "i" }, deleted_at: null }
+    ] };
+    const all = await sessions.find(filter).toArray();
+    let matches = all.filter((r) => r.session_id.startsWith(prefix));
+    if (matches.length === 0)
+      matches = all;
+    if (matches.length === 0) {
+      console.error(`No session found matching '${prefix}'`);
+      process.exit(1);
+    }
+    if (matches.length > 1) {
+      console.error(`Ambiguous match for '${prefix}'. Did you mean:`);
+      for (const m of matches) {
+        console.error(`  ${shortId(m.session_id)}  ${m.project_name}  ${m.machine}  ${m.title ?? ""}`);
+      }
+      process.exit(1);
+    }
+    const session = matches[0];
+    if (undo) {
+      await sessions.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { deleted_at: null } });
+      console.log(`Restored ${session.title ?? shortId(session.session_id)}`);
+    } else {
+      await sessions.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { deleted_at: new Date } });
+      console.log(`Removed ${session.title ?? shortId(session.session_id)} (cs rm --undo ${shortId(session.session_id)} to restore)`);
+    }
+  });
+}
+async function cmdPrune(config, days, all) {
+  const machine = hostname();
+  await withDb(config, async (_db, sessions) => {
+    const filter = {
+      machine,
+      deleted_at: null,
+      $and: [
+        { $or: [{ tag: null }, { tag: { $exists: false } }] }
+      ]
+    };
+    if (!all) {
+      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      filter["updated_at"] = { $lt: cutoff };
+    }
+    const candidates = await sessions.find(filter).toArray();
+    if (candidates.length === 0) {
+      console.log("Nothing to prune.");
+      return;
+    }
+    const result = await sessions.updateMany({ _id: { $in: candidates.map((c2) => c2._id) } }, { $set: { deleted_at: new Date } });
+    console.log(`Pruned ${result.modifiedCount} sessions (cs deleted to view, cs rm --undo <id> to restore)`);
+  });
+}
+async function cmdDeleted(config) {
+  await withDb(config, async (_db, sessions) => {
+    const results = await sessions.find({ deleted_at: { $ne: null } }).sort({ deleted_at: -1 }).limit(50).toArray();
+    if (results.length === 0) {
+      console.log("No deleted sessions.");
+      return;
+    }
+    const headers = ["MACHINE", "PROJECT", "TITLE", "DELETED", "ID"];
+    const colWidths = [14, 14, 30, 12, 8];
+    const rows = results.map((s) => [
+      machineColor(s.machine),
+      s.project_name,
+      s.title ?? dim("(no title)"),
+      relativeTime(s.deleted_at),
+      dim(shortId(s.session_id))
+    ]);
+    console.log(formatTable(headers, rows, colWidths));
+  });
+}
 function printUsage() {
   console.log(`${bold("cs")} \u2014 Claude Session Manager
 
@@ -29310,6 +29391,10 @@ ${bold("Usage:")}
   cs tag <id-prefix> <label>      Tag a session
   cs info <id-prefix>             Show session details
   cs machines                     List machines with session counts
+  cs rm <id-or-name>              Soft-delete a session
+  cs rm --undo <id-or-name>       Restore a soft-deleted session
+  cs prune [--days N] [--all]     Bulk soft-delete unnamed/untagged sessions
+  cs deleted                      List soft-deleted sessions
 
 ${bold("List options:")}
   --all                           Show all machines
@@ -29424,6 +29509,26 @@ async function main() {
     }
     case "machines":
       await cmdMachines(config);
+      break;
+    case "rm": {
+      const undo = args.includes("--undo");
+      const prefix = args.filter((a) => a !== "--undo")[1];
+      if (!prefix) {
+        console.error("Usage: cs rm <id-or-name> [--undo]");
+        process.exit(1);
+      }
+      await cmdRm(config, prefix, undo);
+      break;
+    }
+    case "prune": {
+      const all = args.includes("--all");
+      const daysIdx = args.indexOf("--days");
+      const days = daysIdx >= 0 ? parseInt(args[daysIdx + 1] ?? "30", 10) : 30;
+      await cmdPrune(config, days, all);
+      break;
+    }
+    case "deleted":
+      await cmdDeleted(config);
       break;
     default:
       console.error(`Unknown command: ${command}
