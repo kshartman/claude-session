@@ -579,9 +579,24 @@ async function cmdAttach(
 
   const insideTmux = !!process.env["TMUX"];
 
-  await configureTmuxBar(config, tmuxSession);
-
   if (session.machine === machine) {
+    // Check if tmux session exists, adopt if not
+    const check = await tmuxRun("has-session", "-t", tmuxSession);
+    if (check.exitCode !== 0) {
+      console.log(`Session not running — starting ${green(tmuxSession)}...`);
+      const create = await tmuxRun(
+        "new-session", "-d", "-s", tmuxSession,
+        "-c", session.project_path,
+        "claude", "--resume", session.session_id
+      );
+      if (create.exitCode !== 0) {
+        console.error(`Failed to create tmux session: ${create.stdout}`);
+        process.exit(1);
+      }
+    }
+
+    await configureTmuxBar(config, tmuxSession);
+
     const tmuxCmd = insideTmux
       ? ["tmux", "switch-client", "-t", tmuxSession]
       : ["tmux", "attach-session", "-t", tmuxSession];
@@ -592,17 +607,21 @@ async function cmdAttach(
     });
     await proc.exited;
   } else {
-    // Remote attach via SSH
+    // Remote: check if tmux session exists, adopt if not, then attach
     console.log(`Connecting to ${machineColor(session.machine)}...`);
-    // Remote: SSH always gets a fresh terminal, so attach is correct
-    const proc = Bun.spawn(
-      ["ssh", session.machine, "-t", "tmux", "attach-session", "-t", tmuxSession],
-      {
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-      }
-    );
+    const sshCmd = [
+      "ssh", session.machine, "-t",
+      "bash", "-lc",
+      // Check if session exists; if not, create it with claude --resume
+      `tmux has-session -t ${tmuxSession} 2>/dev/null || ` +
+      `tmux new-session -d -s ${tmuxSession} -c ${session.project_path} claude --resume ${session.session_id}; ` +
+      `tmux attach-session -t ${tmuxSession}`,
+    ];
+    const proc = Bun.spawn(sshCmd, {
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
     await proc.exited;
   }
 }

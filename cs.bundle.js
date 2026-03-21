@@ -29111,8 +29111,17 @@ async function cmdAttach(config, prefix) {
   const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
   const machine = hostname();
   const insideTmux = !!process.env["TMUX"];
-  await configureTmuxBar(config, tmuxSession);
   if (session.machine === machine) {
+    const check = await tmuxRun("has-session", "-t", tmuxSession);
+    if (check.exitCode !== 0) {
+      console.log(`Session not running \u2014 starting ${green(tmuxSession)}...`);
+      const create = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", session.project_path, "claude", "--resume", session.session_id);
+      if (create.exitCode !== 0) {
+        console.error(`Failed to create tmux session: ${create.stdout}`);
+        process.exit(1);
+      }
+    }
+    await configureTmuxBar(config, tmuxSession);
     const tmuxCmd = insideTmux ? ["tmux", "switch-client", "-t", tmuxSession] : ["tmux", "attach-session", "-t", tmuxSession];
     const proc = Bun.spawn(tmuxCmd, {
       stdin: "inherit",
@@ -29122,7 +29131,15 @@ async function cmdAttach(config, prefix) {
     await proc.exited;
   } else {
     console.log(`Connecting to ${machineColor(session.machine)}...`);
-    const proc = Bun.spawn(["ssh", session.machine, "-t", "tmux", "attach-session", "-t", tmuxSession], {
+    const sshCmd = [
+      "ssh",
+      session.machine,
+      "-t",
+      "bash",
+      "-lc",
+      `tmux has-session -t ${tmuxSession} 2>/dev/null || ` + `tmux new-session -d -s ${tmuxSession} -c ${session.project_path} claude --resume ${session.session_id}; ` + `tmux attach-session -t ${tmuxSession}`
+    ];
+    const proc = Bun.spawn(sshCmd, {
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit"
