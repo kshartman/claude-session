@@ -309,56 +309,83 @@ async function cmdDashboard(config: CsConfig): Promise<void> {
   const machine = hostname();
   requireTmux();
 
-  // Get live tmux sessions
+  // Get live tmux sessions and their states
   const tmuxSessions = await tmuxListSessions();
   const liveStates = new Map<string, SessionState | null>();
-
   for (const [name] of tmuxSessions) {
     liveStates.set(name, await detectLiveState(name));
   }
 
-  // Try MongoDB for recent sessions
+  // Try MongoDB for this machine's sessions
   const dbSessions = await tryWithDb(config, async (_db, sessions) => {
     return sessions
       .find({ machine, deleted_at: null })
       .sort({ updated_at: -1 })
-      .limit(10)
+      .limit(15)
       .toArray();
   });
 
   console.log(bold("  Claude Session Manager\n"));
 
-  // Active tmux sessions
-  if (tmuxSessions.size > 0) {
-    console.log(bold("Active Sessions:"));
-    for (const [name, info] of tmuxSessions) {
-      const state = liveStates.get(name);
-      const attached = info.attached ? cyan(" (attached)") : "";
-      console.log(`  ${name}  ${stateColor(state ?? null)}${attached}`);
-    }
-    console.log();
-  }
+  const headers = ["PROJECT", "ID", "STATE", "UPDATED", "TITLE"];
+  const colWidths = [14, 8, 8, 10, 30];
 
-  // Recent sessions from DB
-  if (dbSessions && dbSessions.length > 0) {
-    console.log(bold("Recent Sessions:"));
-    const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
-    const colWidths = [14, 8, 14, 8, 10, 30];
-    const rows = dbSessions.map((s) => [
-      staleText(s.project_name, s.updated_at),
-      dim(shortId(s.session_id)),
-      machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]!),
-      s.tmux_session && liveStates.has(s.tmux_session)
-        ? stateColor(liveStates.get(s.tmux_session) ?? null)
-        : stateColor(s.state ?? null),
-      relativeTime(s.updated_at),
-      staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at),
-    ]);
-    console.log(formatTable(headers, rows, colWidths));
-  } else if (!dbSessions) {
-    console.log(dim("  MongoDB unreachable — showing local tmux sessions only"));
+  if (dbSessions) {
+    // Merge: use DB records but overlay live tmux state
+    // Track which tmux sessions are accounted for
+    const seenTmux = new Set<string>();
+
+    const rows = dbSessions.map((s) => {
+      let state: SessionState | null = s.state ?? null;
+      if (s.tmux_session && liveStates.has(s.tmux_session)) {
+        state = liveStates.get(s.tmux_session) ?? null;
+        seenTmux.add(s.tmux_session);
+      } else if (s.title && liveStates.has(s.title)) {
+        state = liveStates.get(s.title) ?? null;
+        seenTmux.add(s.title);
+      }
+      return [
+        staleText(s.project_name, s.updated_at),
+        dim(shortId(s.session_id)),
+        stateColor(state),
+        relativeTime(s.updated_at),
+        staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at),
+      ];
+    });
+
+    // Add any tmux sessions not in DB (e.g., launched outside cs)
+    for (const [name] of tmuxSessions) {
+      if (!seenTmux.has(name)) {
+        rows.unshift([
+          dim("—"),
+          dim("—"),
+          stateColor(liveStates.get(name) ?? null),
+          dim("live"),
+          name,
+        ]);
+      }
+    }
+
+    if (rows.length > 0) {
+      console.log(formatTable(headers, rows, colWidths));
+    } else {
+      console.log(dim("  No sessions found. Run 'cs sync' to import."));
+    }
   } else {
-    console.log(dim("  No sessions found. Run 'cs sync' to import."));
+    // DB unreachable — show tmux sessions only
+    console.log(dim("  MongoDB unreachable — showing local tmux only\n"));
+    if (tmuxSessions.size > 0) {
+      const rows = [...tmuxSessions.entries()].map(([name, info]) => [
+        dim("—"),
+        dim("—"),
+        stateColor(liveStates.get(name) ?? null),
+        info.attached ? cyan("attached") : dim("detached"),
+        name,
+      ]);
+      console.log(formatTable(headers, rows, colWidths));
+    } else {
+      console.log(dim("  No active sessions."));
+    }
   }
 }
 
