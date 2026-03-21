@@ -610,12 +610,25 @@ async function cmdAttach(
     // Remote: ensure session exists, then attach in a clean SSH
     console.log(`Connecting to ${machineColor(session.machine)}...`);
 
-    // Step 1: ensure tmux session exists on remote (non-interactive)
+    // Step 1: ensure tmux session exists on remote + configure status bar
+    const detachHint = config.showDetachHint ? await getDetachHint() : "";
+    const statusLeft = detachHint
+      ? `[${tmuxSession}] detach: ${detachHint}`
+      : `[${tmuxSession}]`;
+
+    const barCmds =
+      `tmux set-option -t '${tmuxSession}' window-status-format '' 2>/dev/null; ` +
+      `tmux set-option -t '${tmuxSession}' window-status-current-format '' 2>/dev/null; ` +
+      `tmux set-option -t '${tmuxSession}' status-right '' 2>/dev/null; ` +
+      `tmux set-option -t '${tmuxSession}' status-left-length 80 2>/dev/null; ` +
+      `tmux set-option -t '${tmuxSession}' status-left ' ${statusLeft}' 2>/dev/null`;
+
     const ensure = Bun.spawn([
       "ssh", session.machine,
       "bash", "-lc",
       `tmux has-session -t '${tmuxSession}' 2>/dev/null || ` +
-      `tmux new-session -d -s '${tmuxSession}' -c '${session.project_path}' 'bash -lc "claude --resume ${session.session_id}"'`,
+      `tmux new-session -d -s '${tmuxSession}' -c '${session.project_path}' 'bash -lc "claude --resume ${session.session_id}"'; ` +
+      barCmds,
     ], { stdout: "pipe", stderr: "pipe" });
     await ensure.exited;
 

@@ -29131,12 +29131,15 @@ async function cmdAttach(config, prefix) {
     await proc.exited;
   } else {
     console.log(`Connecting to ${machineColor(session.machine)}...`);
+    const detachHint = config.showDetachHint ? await getDetachHint() : "";
+    const statusLeft = detachHint ? `[${tmuxSession}] detach: ${detachHint}` : `[${tmuxSession}]`;
+    const barCmds = `tmux set-option -t '${tmuxSession}' window-status-format '' 2>/dev/null; ` + `tmux set-option -t '${tmuxSession}' window-status-current-format '' 2>/dev/null; ` + `tmux set-option -t '${tmuxSession}' status-right '' 2>/dev/null; ` + `tmux set-option -t '${tmuxSession}' status-left-length 80 2>/dev/null; ` + `tmux set-option -t '${tmuxSession}' status-left ' ${statusLeft}' 2>/dev/null`;
     const ensure = Bun.spawn([
       "ssh",
       session.machine,
       "bash",
       "-lc",
-      `tmux has-session -t '${tmuxSession}' 2>/dev/null || ` + `tmux new-session -d -s '${tmuxSession}' -c '${session.project_path}' 'bash -lc "claude --resume ${session.session_id}"'`
+      `tmux has-session -t '${tmuxSession}' 2>/dev/null || ` + `tmux new-session -d -s '${tmuxSession}' -c '${session.project_path}' 'bash -lc "claude --resume ${session.session_id}"'; ` + barCmds
     ], { stdout: "pipe", stderr: "pipe" });
     await ensure.exited;
     const proc = Bun.spawn([
