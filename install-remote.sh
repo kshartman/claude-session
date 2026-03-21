@@ -6,6 +6,8 @@ BIN_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/cs"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 BUNDLE_URL="https://git.bogometer.com/shartman/claude-session/-/raw/main/cs.bundle.js"
+MANPAGE_URL="https://git.bogometer.com/shartman/claude-session/-/raw/main/cs.1"
+MAN_DIR="$HOME/.local/share/man/man1"
 
 echo "cs — Claude Session Manager (remote install)"
 echo
@@ -32,6 +34,11 @@ echo "Downloading cs..."
 curl -sSL "$BUNDLE_URL" -o "$BIN_DIR/cs"
 chmod +x "$BIN_DIR/cs"
 echo "  Installed to $BIN_DIR/cs"
+
+# Download man page
+mkdir -p "$MAN_DIR"
+curl -sSL "$MANPAGE_URL" -o "$MAN_DIR/cs.1"
+echo "  Installed man page (man cs)"
 
 # Create config directory
 if [ ! -d "$CONFIG_DIR" ]; then
