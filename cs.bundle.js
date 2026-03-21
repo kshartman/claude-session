@@ -28461,6 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+var VERSION = "1.1.0";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -28494,7 +28495,8 @@ function loadConfig() {
   }
   return {
     mongoUri: parsed["mongoUri"],
-    showDetachHint: parsed["showDetachHint"] === true
+    showDetachHint: parsed["showDetachHint"] === true,
+    listFQDN: parsed["listFQDN"] !== false
   };
 }
 
@@ -28954,14 +28956,14 @@ async function cmdDashboard(config) {
   }
   if (dbSessions && dbSessions.length > 0) {
     console.log(bold("Recent Sessions:"));
-    const headers = ["PROJECT", "TITLE", "STATE", "UPDATED", "ID"];
-    const colWidths = [15, 30, 8, 10, 8];
+    const headers = ["PROJECT", "ID", "STATE", "UPDATED", "TITLE"];
+    const colWidths = [14, 8, 8, 10, 30];
     const rows = dbSessions.map((s) => [
       staleText(s.project_name, s.updated_at),
-      staleText(s.title ?? dim("(no title)"), s.updated_at),
+      dim(shortId(s.session_id)),
       s.tmux_session && liveStates.has(s.tmux_session) ? stateColor(liveStates.get(s.tmux_session) ?? null) : stateColor(s.state ?? null),
       relativeTime(s.updated_at),
-      dim(shortId(s.session_id))
+      staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at)
     ]);
     console.log(formatTable(headers, rows, colWidths));
   } else if (!dbSessions) {
@@ -28984,16 +28986,15 @@ async function cmdList(config, opts) {
       console.log("No sessions found.");
       return;
     }
-    const headers = ["MACHINE", "PROJECT", "TITLE", "TAG", "STATE", "UPDATED", "ID"];
-    const colWidths = [14, 14, 28, 10, 8, 10, 8];
+    const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
+    const colWidths = [14, 8, 14, 8, 10, 30];
     const rows = results.map((s) => [
-      machineColor(s.machine),
       staleText(s.project_name, s.updated_at),
-      staleText(s.title ?? dim("(no title)"), s.updated_at),
-      s.tag ?? dim("\u2014"),
+      dim(shortId(s.session_id)),
+      machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]),
       stateColor(s.state),
       relativeTime(s.updated_at),
-      dim(shortId(s.session_id))
+      staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at)
     ]);
     console.log(formatTable(headers, rows, colWidths));
   });
@@ -29374,6 +29375,47 @@ async function cmdDeleted(config) {
     console.log(formatTable(headers, rows, colWidths));
   });
 }
+var BASE_URL = "https://git.bogometer.com/shartman/claude-session/-/raw/main";
+async function cmdUpdate() {
+  let remoteVersion;
+  try {
+    const resp = await fetch(`${BASE_URL}/VERSION`);
+    if (!resp.ok)
+      throw new Error(`HTTP ${resp.status}`);
+    remoteVersion = (await resp.text()).trim();
+  } catch (err) {
+    console.error(`Failed to check for updates: ${err}`);
+    process.exit(1);
+  }
+  if (remoteVersion === VERSION) {
+    console.log(`cs v${VERSION} is up to date.`);
+    return;
+  }
+  console.log(`Updating cs v${VERSION} \u2192 v${remoteVersion}...`);
+  const binPath = `${homedir2()}/.local/bin/cs`;
+  try {
+    const resp = await fetch(`${BASE_URL}/cs.bundle.js`);
+    if (!resp.ok)
+      throw new Error(`HTTP ${resp.status}`);
+    const content = await resp.text();
+    await Bun.write(binPath, content);
+    const { chmodSync } = await import("fs");
+    chmodSync(binPath, 493);
+  } catch (err) {
+    console.error(`Failed to download bundle: ${err}`);
+    process.exit(1);
+  }
+  const manPath = `${homedir2()}/.local/share/man/man1/cs.1`;
+  try {
+    const resp = await fetch(`${BASE_URL}/cs.1`);
+    if (resp.ok) {
+      const { mkdirSync } = await import("fs");
+      mkdirSync(`${homedir2()}/.local/share/man/man1`, { recursive: true });
+      await Bun.write(manPath, await resp.text());
+    }
+  } catch {}
+  console.log(`Updated to cs v${remoteVersion}`);
+}
 function printUsage() {
   console.log(`${bold("cs")} \u2014 Claude Session Manager
 
@@ -29395,6 +29437,8 @@ ${bold("Usage:")}
   cs rm --undo <id-or-name>       Restore a soft-deleted session
   cs prune [--days N] [--all]     Bulk soft-delete unnamed/untagged sessions
   cs deleted                      List soft-deleted sessions
+  cs update                       Update cs to latest version
+  cs version                      Show current version
 
 ${bold("List options:")}
   --all                           Show all machines
@@ -29411,6 +29455,14 @@ async function main() {
   }
   if (command === "status") {
     await cmdStatus();
+    return;
+  }
+  if (command === "update") {
+    await cmdUpdate();
+    return;
+  }
+  if (command === "version" || command === "--version") {
+    console.log(`cs v${VERSION}`);
     return;
   }
   let config;
