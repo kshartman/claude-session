@@ -150,6 +150,40 @@ Full details for a single session: ID, machine, project, title, tag, state, mess
 
 List all machines that have synced sessions, with session counts and when each was last seen.
 
+### `cs rm <id-or-name>`
+
+Soft-delete a session from MongoDB. It won't appear in listings or the dashboard, and `cs sync` won't bring it back.
+
+```bash
+cs rm "=c"                     # remove junk session by title
+cs rm 262a                     # remove by ID prefix
+cs rm --undo 262a              # restore a soft-deleted session
+```
+
+### `cs prune [--days N] [--all]`
+
+Bulk soft-delete sessions that have no `/rename` name and no tag. Default threshold is 30 days.
+
+```bash
+cs prune                       # remove unnamed/untagged older than 30 days
+cs prune --days 7              # older than 7 days
+cs prune --all                 # all unnamed/untagged regardless of age
+```
+
+Named and tagged sessions are never pruned.
+
+### `cs deleted`
+
+List all soft-deleted sessions. Use `cs rm --undo <id>` to restore any of them.
+
+### `cs update`
+
+Check for a new version and update in place. Compares the local version against the remote VERSION file and downloads the new bundle if different.
+
+### `cs version`
+
+Print the current version.
+
 ## How it works
 
 Claude Code stores sessions as JSONL files in `~/.claude/projects/`. Each file is a conversation — one JSON object per line.
@@ -186,7 +220,8 @@ Config lives at `~/.config/cs/config.json`:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `mongoUri` | (required) | MongoDB connection string |
-| `showDetachHint` | `false` | Show detach key combo in the tmux status bar when attached
+| `showDetachHint` | `false` | Show detach key combo in the tmux status bar when attached |
+| `listFQDN` | `true` | Show full hostnames; set `false` to show short names (e.g., `dev` instead of `dev.example.com`)
 
 ## Multi-machine setup
 

@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.1.0";
+var VERSION = "1.1.1";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -28956,11 +28956,12 @@ async function cmdDashboard(config) {
   }
   if (dbSessions && dbSessions.length > 0) {
     console.log(bold("Recent Sessions:"));
-    const headers = ["PROJECT", "ID", "STATE", "UPDATED", "TITLE"];
-    const colWidths = [14, 8, 8, 10, 30];
+    const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
+    const colWidths = [14, 8, 14, 8, 10, 30];
     const rows = dbSessions.map((s) => [
       staleText(s.project_name, s.updated_at),
       dim(shortId(s.session_id)),
+      machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]),
       s.tmux_session && liveStates.has(s.tmux_session) ? stateColor(liveStates.get(s.tmux_session) ?? null) : stateColor(s.state ?? null),
       relativeTime(s.updated_at),
       staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at)

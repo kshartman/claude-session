@@ -167,6 +167,14 @@ cs tag <id-or-name> <label>     # tag a session in MongoDB
 cs info <id-or-name>            # show full record for one session
 
 cs machines                     # list distinct machines with session counts and last seen
+
+cs rm <id-or-name>              # soft-delete a session (sync won't bring it back)
+cs rm --undo <id-or-name>       # restore a soft-deleted session
+cs prune [--days N] [--all]     # bulk soft-delete unnamed/untagged sessions
+cs deleted                      # list soft-deleted sessions
+
+cs update                       # check for new version and update in place
+cs version                      # print current version
 ```
 
 ## Color Output
