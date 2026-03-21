@@ -856,7 +856,7 @@ async function cmdInfo(
 
   console.log(bold("Session Info\n"));
   console.log(`  ID:        ${session.session_id}`);
-  console.log(`  Machine:   ${machineColor(session.machine)}`);
+  console.log(`  Host:      ${machineColor(config.listFQDN ? session.machine : session.machine.split(".")[0]!)}`);
   console.log(`  Project:   ${session.project_path}`);
   console.log(`  Title:     ${session.title ?? dim("(no title)")}`);
   console.log(`  Tag:       ${session.tag ?? dim("(none)")}`);
@@ -895,7 +895,7 @@ async function cmdHosts(config: CsConfig): Promise<void> {
     const headers = ["HOST", "SESSIONS", "LAST SEEN"];
     const colWidths = [25, 10, 12];
     const rows = results.map((r) => [
-      machineColor(r["_id"] as string),
+      machineColor(config.listFQDN ? (r["_id"] as string) : (r["_id"] as string).split(".")[0]!),
       String(r["count"]),
       relativeTime(new Date(r["last_seen"] as string)),
     ]);
@@ -1097,10 +1097,10 @@ async function cmdDeleted(config: CsConfig): Promise<void> {
       return;
     }
 
-    const headers = ["MACHINE", "PROJECT", "TITLE", "DELETED", "ID"];
+    const headers = ["HOST", "PROJECT", "TITLE", "DELETED", "ID"];
     const colWidths = [14, 14, 30, 12, 8];
     const rows = results.map((s) => [
-      machineColor(s.machine),
+      machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]!),
       s.project_name,
       s.title ?? dim("(no title)"),
       relativeTime(s.deleted_at!),
@@ -1149,16 +1149,27 @@ async function cmdPurge(
   const jsonlPath = join(claudeDir, pathHash, `${session.session_id}.jsonl`);
   const sessionDir = join(claudeDir, pathHash, session.session_id);
 
+  const isLocal = session.machine === hostname();
+
   if (!confirm) {
     console.log(`Would purge:\n`);
     console.log(`  Session:  ${session.title ?? shortId(session.session_id)}`);
-    console.log(`  Machine:  ${session.machine}`);
+    console.log(`  Host:     ${session.machine}`);
     console.log(`  Project:  ${session.project_path}`);
-    console.log(`  JSONL:    ${existsSync(jsonlPath) ? jsonlPath : dim("(not on this machine)")}`);
-    console.log(`  Dir:      ${existsSync(sessionDir) ? sessionDir : dim("(not on this machine)")}`);
+    console.log(`  JSONL:    ${existsSync(jsonlPath) ? jsonlPath : dim("(not on this host)")}`);
+    console.log(`  Dir:      ${existsSync(sessionDir) ? sessionDir : dim("(not on this host)")}`);
     console.log(`  MongoDB:  record will be deleted`);
+    if (!isLocal) {
+      console.log(yellow(`\n  WARNING: session is on ${session.machine} — run cs purge there to delete files`));
+    }
     console.log(`\nRun with --yes to confirm.`);
     return;
+  }
+
+  if (!isLocal) {
+    console.error(`Cannot purge: session is on ${session.machine}, not this host.`);
+    console.error(`SSH to ${session.machine} and run cs purge there.`);
+    process.exit(1);
   }
 
   // Kill tmux session if running
