@@ -1085,10 +1085,22 @@ async function cmdPrune(
   });
 }
 
-async function cmdDeleted(config: CsConfig): Promise<void> {
+async function cmdDeleted(
+  config: CsConfig,
+  opts: { local: boolean; host: string | null }
+): Promise<void> {
   await withDb(config, async (_db, sessions) => {
+    const filter: Record<string, unknown> = { deleted_at: { $ne: null } };
+    if (opts.local) {
+      filter["machine"] = hostname();
+    } else if (opts.host) {
+      filter["machine"] = opts.host.includes(".")
+        ? opts.host
+        : { $regex: `^${escapeRegex(opts.host)}(\\.|\$)` };
+    }
+
     const results = await sessions
-      .find({ deleted_at: { $ne: null } })
+      .find(filter)
       .sort({ deleted_at: -1 })
       .limit(50)
       .toArray();
@@ -1450,9 +1462,13 @@ async function main(): Promise<void> {
       break;
     }
 
-    case "deleted":
-      await cmdDeleted(config);
+    case "deleted": {
+      const local = args.includes("--local");
+      const hostIdx = args.indexOf("--host");
+      const host = hostIdx >= 0 ? (args[hostIdx + 1] ?? null) : null;
+      await cmdDeleted(config, { local, host });
       break;
+    }
 
     case "purge": {
       const yes = args.includes("--yes");

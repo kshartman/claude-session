@@ -29456,9 +29456,15 @@ async function cmdPrune(config, days, all) {
     console.log(`Pruned ${result.modifiedCount} sessions (cs deleted to view, cs rm --undo <id> to restore)`);
   });
 }
-async function cmdDeleted(config) {
+async function cmdDeleted(config, opts) {
   await withDb(config, async (_db, sessions) => {
-    const results = await sessions.find({ deleted_at: { $ne: null } }).sort({ deleted_at: -1 }).limit(50).toArray();
+    const filter = { deleted_at: { $ne: null } };
+    if (opts.local) {
+      filter["machine"] = hostname();
+    } else if (opts.host) {
+      filter["machine"] = opts.host.includes(".") ? opts.host : { $regex: `^${escapeRegex(opts.host)}(\\.|$)` };
+    }
+    const results = await sessions.find(filter).sort({ deleted_at: -1 }).limit(50).toArray();
     if (results.length === 0) {
       console.log("No deleted sessions.");
       return;
@@ -29754,9 +29760,13 @@ async function main() {
       await cmdPrune(config, days, all);
       break;
     }
-    case "deleted":
-      await cmdDeleted(config);
+    case "deleted": {
+      const local = args.includes("--local");
+      const hostIdx = args.indexOf("--host");
+      const host = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
+      await cmdDeleted(config, { local, host });
       break;
+    }
     case "purge": {
       const yes = args.includes("--yes");
       const prefix = args.filter((a) => a !== "--yes")[1];
