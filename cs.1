@@ -130,6 +130,25 @@ in
 .B cs list
 output.
 .TP
+.BI "cs rm" " id-or-name"
+Soft-delete a session. The record is marked with a
+.I deleted_at
+timestamp. It no longer appears in listings, queries, or sync, but can be
+restored.
+.TP
+.BI "cs rm --undo" " id-or-name"
+Restore a soft-deleted session.
+.TP
+.BI "cs prune" " [--days N] [--all]"
+Bulk soft-delete sessions that have no
+.B /rename
+name and no tag. Default threshold is 30 days. With
+.BR --all ,
+prunes regardless of age. Named and tagged sessions are never pruned.
+.TP
+.B cs deleted
+List all soft-deleted sessions with deletion timestamps.
+.TP
 .BI "cs info" " id-or-name"
 Display the full record for a single session, including session ID, machine,
 project path, title, tag, state, message count, timestamps, tmux session name,
