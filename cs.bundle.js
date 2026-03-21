@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.4.2";
+var VERSION = "1.4.3";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29688,6 +29688,43 @@ async function cmdUpdate() {
   console.log(`Updated to cs v${remoteVersion}`);
   ensureCron();
 }
+async function cmdUpdateAll(config) {
+  await cmdUpdate();
+  const hosts = await withDb(config, async (_db, sessions) => {
+    const pipeline = [
+      { $group: { _id: "$machine" } }
+    ];
+    return sessions.aggregate(pipeline).toArray();
+  });
+  const localHost = hostname();
+  const remoteHosts = hosts.map((h) => h["_id"]).filter((h) => h !== localHost);
+  if (remoteHosts.length === 0) {
+    console.log(`
+No remote hosts to update.`);
+    return;
+  }
+  console.log(`
+Updating ${remoteHosts.length} remote host(s)...`);
+  for (const host of remoteHosts) {
+    const shortName = host.split(".")[0];
+    process.stdout.write(`  ${shortName}: `);
+    const proc = Bun.spawn([
+      "ssh",
+      host,
+      "-o",
+      "ConnectTimeout=5",
+      "PATH=$HOME/.local/bin:$HOME/.bun/bin:$PATH cs update"
+    ], { stdout: "pipe", stderr: "pipe" });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (exitCode === 0) {
+      console.log(stdout.trim().split(`
+`).pop() ?? "done");
+    } else {
+      console.log(red("failed"));
+    }
+  }
+}
 function printUsage() {
   console.log(`${bold("cs")} \u2014 Claude Session Manager
 
@@ -29712,6 +29749,7 @@ ${bold("Usage:")}
   cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
   cs purge <pattern> --all [--yes] Bulk hard delete matching sessions
   cs update                       Update cs to latest version
+  cs update --all                 Update cs on all known hosts via SSH
   cs version                      Show current version
 
 ${bold("List options:")}
@@ -29740,7 +29778,21 @@ async function main() {
     return;
   }
   if (command === "update") {
-    await cmdUpdate();
+    if (args.includes("--all")) {
+      let config2;
+      try {
+        config2 = loadConfig();
+      } catch (err) {
+        if (err instanceof ConfigError) {
+          console.error(err.message);
+          process.exit(1);
+        }
+        throw err;
+      }
+      await cmdUpdateAll(config2);
+    } else {
+      await cmdUpdate();
+    }
     return;
   }
   if (command === "version" || command === "--version") {
