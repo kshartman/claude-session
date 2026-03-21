@@ -150,8 +150,15 @@ name and no tag. Default threshold is 30 days. With
 .BR --all ,
 prunes regardless of age. Named and tagged sessions are never pruned.
 .TP
-.B cs deleted
-List all soft-deleted sessions with deletion timestamps.
+.BI "cs deleted" " [--local] [--host name]"
+List soft-deleted sessions with deletion timestamps. Defaults to all hosts.
+.TP
+.BI "cs purge" " id-or-name [--yes]"
+Hard delete a session. Removes the MongoDB record, JSONL file, and session
+directory. Without
+.BR --yes ,
+shows what would be deleted. Must be run on the host where the session lives.
+This is irreversible.
 .TP
 .BI "cs info" " id-or-name"
 Display the full record for a single session, including session ID, machine,

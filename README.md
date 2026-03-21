@@ -12,7 +12,14 @@ On any machine with Bun and tmux:
 curl -sSL https://git.bogometer.com/shartman/claude-session/-/raw/main/install-remote.sh | bash
 ```
 
-Installs Bun if missing (without modifying `.bashrc`), downloads the bundled JS to `~/.local/bin/cs`, and sets up the config directory.
+Installs Bun if missing (without modifying `.bashrc`), downloads the bundled JS to `~/.local/bin/cs`, sets up config and cron sync.
+
+Options (pass via `bash -s --`):
+
+```bash
+curl ... | bash -s -- --nocron           # skip cron setup
+curl ... | bash -s -- --noconfig         # skip config copy from source host
+```
 
 ### From source
 
@@ -166,13 +173,17 @@ cs prune --all                 # all unnamed/untagged regardless of age
 
 Named and tagged sessions are never pruned.
 
-### `cs deleted`
+### `cs deleted [--local] [--host <name>]`
 
-List all soft-deleted sessions. Use `cs rm --undo <id>` to restore any of them.
+List soft-deleted sessions. Defaults to all hosts. Use `cs rm --undo <id>` to restore any of them.
+
+### `cs purge <id-or-name> [--yes]`
+
+Hard delete a session — removes the MongoDB record, JSONL file, and session directory. Irreversible. Without `--yes`, shows what would be deleted. Must be run on the host where the session lives.
 
 ### `cs update`
 
-Check for a new version and update in place. Compares the local version against the remote VERSION file and downloads the new bundle if different.
+Check for a new version and update in place. Compares the local version against the remote VERSION file and downloads the new bundle if different. Also installs cron sync if not already set up (unless `noCron` is set in config).
 
 ### `cs version`
 
@@ -182,7 +193,7 @@ Print the current version.
 
 Claude Code stores sessions as JSONL files in `~/.claude/projects/`. Each file is a conversation — one JSON object per line.
 
-`cs sync` reads these files, extracts metadata (title from your first message, message count, timestamps), and upserts to a central MongoDB database. It also checks for tmux sessions named `cs-*` and detects their state.
+`cs sync` reads these files, extracts metadata (title from your first message, message count, timestamps), and upserts to a central MongoDB database. It also checks for active tmux sessions and detects their state.
 
 The MongoDB database is the shared layer — every machine syncs to it, and any machine can query it. Session data stays local; only metadata goes to the database.
 
@@ -215,7 +226,8 @@ Config lives at `~/.config/cs/config.json`:
 |--------|---------|-------------|
 | `mongoUri` | (required) | MongoDB connection string |
 | `showDetachHint` | `false` | Show detach key combo in the tmux status bar when attached |
-| `listFQDN` | `true` | Show full hostnames; set `false` to show short names (e.g., `dev` instead of `dev.example.com`)
+| `listFQDN` | `true` | Show full hostnames; set `false` to show short names (e.g., `dev` instead of `dev.example.com`) |
+| `noCron` | `false` | Disable automatic cron sync setup on install and update
 
 ## Multi-machine setup
 
