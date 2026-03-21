@@ -495,12 +495,23 @@ async function cmdLaunch(
 
 async function resolveSession(
   config: CsConfig,
-  prefix: string
+  prefix: string,
+  host?: string | null
 ): Promise<SessionRecord> {
   return withDb(config, async (_db, sessions) => {
+    // Build host filter
+    const hostFilter: Record<string, unknown> = {};
+    if (host) {
+      hostFilter["machine"] = host.includes(".")
+        ? host
+        : { $regex: `^${escapeRegex(host)}(\\.|\$)` };
+    }
+
+    const base = { ...hostFilter, deleted_at: null };
+
     // Try by session ID prefix first
     const byId = await sessions
-      .find({ session_id: { $regex: `^${escapeRegex(prefix)}` }, deleted_at: null })
+      .find({ ...base, session_id: { $regex: `^${escapeRegex(prefix)}` } })
       .toArray();
 
     let matches = matchPrefix(byId, prefix);
@@ -508,21 +519,21 @@ async function resolveSession(
     // Try exact title match (from /rename)
     if (matches.length === 0) {
       matches = await sessions
-        .find({ title: prefix, deleted_at: null })
+        .find({ ...base, title: prefix })
         .toArray();
     }
 
     // Try exact project name match
     if (matches.length === 0) {
       matches = await sessions
-        .find({ project_name: prefix, deleted_at: null })
+        .find({ ...base, project_name: prefix })
         .toArray();
     }
 
     // Last resort: title prefix (starts with, not substring)
     if (matches.length === 0) {
       matches = await sessions
-        .find({ title: { $regex: `^${escapeRegex(prefix)}`, $options: "i" }, deleted_at: null })
+        .find({ ...base, title: { $regex: `^${escapeRegex(prefix)}`, $options: "i" } })
         .toArray();
     }
 
@@ -532,6 +543,12 @@ async function resolveSession(
     }
 
     if (matches.length > 1) {
+      // Prefer local host when ambiguous and no explicit --host
+      if (!host) {
+        const local = matches.filter((m) => m.machine === hostname());
+        if (local.length === 1) return local[0]!;
+      }
+
       console.error(`Ambiguous match for '${prefix}'. Did you mean:`);
       for (const m of matches) {
         console.error(
@@ -600,10 +617,11 @@ async function configureTmuxBar(
 
 async function cmdAttach(
   config: CsConfig,
-  prefix: string
+  prefix: string,
+  host?: string | null
 ): Promise<void> {
   requireTmux();
-  const session = await resolveSession(config, prefix);
+  const session = await resolveSession(config, prefix, host);
   const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
   const machine = hostname();
 
@@ -1435,12 +1453,14 @@ async function main(): Promise<void> {
     }
 
     case "attach": {
-      const prefix = args[1];
+      const hostIdx = args.indexOf("--host");
+      const host = hostIdx >= 0 ? (args[hostIdx + 1] ?? null) : null;
+      const prefix = args.filter((a) => a !== "--host" && a !== host)[1];
       if (!prefix) {
-        console.error("Usage: cs attach <session_id_prefix>");
+        console.error("Usage: cs attach <id-or-name> [--host <name>]");
         process.exit(1);
       }
-      await cmdAttach(config, prefix);
+      await cmdAttach(config, prefix, host);
       break;
     }
 
