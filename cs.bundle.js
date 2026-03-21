@@ -28539,7 +28539,7 @@ function red(text) {
 function green(text) {
   return c("green", text);
 }
-function yellow2(text) {
+function yellow(text) {
   return c("yellow", text);
 }
 function cyan(text) {
@@ -28570,7 +28570,7 @@ function stateColor(state) {
     case "WORKING":
       return green(state);
     case "WAITING":
-      return yellow2(state);
+      return yellow(state);
     case "IDLE":
       return dim(state);
     case "DEAD":

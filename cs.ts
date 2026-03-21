@@ -27,6 +27,7 @@ import {
   dim,
   red,
   green,
+  yellow,
   cyan,
   machineColor,
   stateColor,
