@@ -12,7 +12,7 @@ On any machine with Bun and tmux:
 curl -sSL https://git.bogometer.com/shartman/claude-session/-/raw/main/install-remote.sh | bash
 ```
 
-Downloads a single bundled JS file to `~/.local/bin/cs` and sets up the config directory.
+Installs Bun if missing (without modifying `.bashrc`), downloads the bundled JS to `~/.local/bin/cs`, and sets up the config directory.
 
 ### From source
 
@@ -31,7 +31,7 @@ cs          # see the dashboard
 
 ### Requirements
 
-- [Bun](https://bun.sh) runtime
+- [Bun](https://bun.sh) runtime (auto-installed if missing)
 - [tmux](https://github.com/tmux/tmux) for persistent sessions
 - [fzf](https://github.com/junegunn/fzf) for interactive picker (optional, only needed for `cs resume`)
 - MongoDB 5+ with TLS
