@@ -36,15 +36,9 @@ cs          # see the dashboard
 - [fzf](https://github.com/junegunn/fzf) for interactive picker (optional, only needed for `cs resume`)
 - MongoDB 5+ with TLS
 
-### Auto-sync on login
+### Auto-sync
 
-Add to `~/.bashrc`:
-
-```bash
-cs sync --quiet &
-```
-
-This silently syncs sessions every time you open a terminal.
+The installer sets up a user cron job that syncs every 5 minutes. No `.bashrc` changes needed — your shell startup stays instant.
 
 ## Commands
 
@@ -227,7 +221,7 @@ Config lives at `~/.config/cs/config.json`:
 
 1. Install cs on each machine (`curl` one-liner or clone + `./install.sh`)
 2. Use the same MongoDB connection string on all machines
-3. Add `cs sync --quiet &` to each machine's `.bashrc`
+3. Cron sync is set up automatically by the installer
 4. Set up SSH key auth between machines (for remote attach)
 
 Now `cs list` shows sessions from all hosts, and `cs attach` connects to any of them.

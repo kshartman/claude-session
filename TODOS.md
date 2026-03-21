@@ -1,17 +1,7 @@
 # TODOS
 
-## P1 — Background sync via user cron instead of .bashrc
-`cs sync --quiet &` in .bashrc adds noticeable delay to every shell login.
-Replace with a user crontab entry (e.g., every 5 minutes) set up by the installer.
-
-**Why:** Shell startup should be instant. Sync doesn't need to run on every login —
-periodic background sync is sufficient and doesn't block the terminal.
-**Context:** Use `crontab -l` / `crontab -` to install a user cron entry like
-`*/5 * * * * ~/.local/bin/cs sync --quiet 2>/dev/null`. The installer should add
-this automatically and remove the .bashrc recommendation. May also want a
-`cs sync --daemon` mode that runs every N minutes in the foreground (for debugging).
-**Effort:** S (CC ~15 min)
-**Depends on:** Nothing — can do immediately.
+## ~~P1 — Background sync via user cron instead of .bashrc~~
+**Completed:** v1.3.8 (2026-03-21)
 
 ## P2 — Cross-session memory
 Store key decisions, architecture notes, and debugging findings in the `memory`
