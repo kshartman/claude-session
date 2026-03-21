@@ -612,8 +612,12 @@ async function configureTmuxBar(
     statusLeft += ` ${hints.join(" | ")}`;
   }
 
-  await tmuxRun("set-option", "-t", tmuxSession, "status-left-length", "120");
-  await tmuxRun("set-option", "-t", tmuxSession, "status-left", ` ${statusLeft}`);
+  const r1 = await tmuxRun("set-option", "-t", tmuxSession, "status-left-length", "120");
+  const r2 = await tmuxRun("set-option", "-t", tmuxSession, "status-left", ` ${statusLeft}`);
+  if (r1.exitCode !== 0 || r2.exitCode !== 0) {
+    // Debug: bar config failed — log but don't crash
+    process.stderr.write(`tmux bar config failed: r1=${r1.exitCode} r2=${r2.exitCode} session=${tmuxSession}\n`);
+  }
 }
 
 async function cmdAttach(
