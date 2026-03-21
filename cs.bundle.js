@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.2.0";
+var VERSION = "1.2.1";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -28946,7 +28946,7 @@ async function cmdDashboard(config) {
   console.log(bold(`  Claude Session Manager
 `));
   const headers = ["PROJECT", "ID", "STATE", "UPDATED", "TITLE"];
-  const colWidths = [14, 8, 8, 10, 30];
+  const colWidths = [12, 8, 8, 10, 30];
   if (dbSessions) {
     const seenTmux = new Set;
     const rows = dbSessions.map((s) => {
@@ -28958,12 +28958,15 @@ async function cmdDashboard(config) {
         state = liveStates.get(s.title) ?? null;
         seenTmux.add(s.title);
       }
+      const proj = s.project_name.length > 12 ? s.project_name.slice(0, 11) + ">" : s.project_name;
+      const title = s.title ?? "(no title)";
+      const truncTitle = title.length > 30 ? title.slice(0, 29) + ">" : title;
       return [
-        staleText(s.project_name, s.updated_at),
+        staleText(proj, s.updated_at),
         dim(shortId(s.session_id)),
         stateColor(state),
         relativeTime(s.updated_at),
-        staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at)
+        staleText(truncTitle, s.updated_at)
       ];
     });
     for (const [name] of tmuxSessions) {
@@ -29005,7 +29008,7 @@ async function cmdList(config, opts) {
     if (opts.local) {
       filter["machine"] = hostname();
     } else if (opts.host) {
-      filter["machine"] = opts.host;
+      filter["machine"] = opts.host.includes(".") ? opts.host : { $regex: `^${escapeRegex(opts.host)}(\\.|$)` };
     }
     if (opts.project) {
       filter["project_name"] = opts.project;
@@ -29016,15 +29019,20 @@ async function cmdList(config, opts) {
       return;
     }
     const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
-    const colWidths = [14, 8, 14, 8, 10, 30];
-    const rows = results.map((s) => [
-      staleText(s.project_name, s.updated_at),
-      dim(shortId(s.session_id)),
-      machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]),
-      stateColor(s.state),
-      relativeTime(s.updated_at),
-      staleText((s.title ?? "(no title)").slice(0, 30), s.updated_at)
-    ]);
+    const colWidths = [12, 8, 8, 8, 10, 30];
+    const rows = results.map((s) => {
+      const proj = s.project_name.length > 12 ? s.project_name.slice(0, 11) + ">" : s.project_name;
+      const title = s.title ?? "(no title)";
+      const truncTitle = title.length > 30 ? title.slice(0, 29) + ">" : title;
+      return [
+        staleText(proj, s.updated_at),
+        dim(shortId(s.session_id)),
+        machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]),
+        stateColor(s.state),
+        relativeTime(s.updated_at),
+        staleText(truncTitle, s.updated_at)
+      ];
+    });
     console.log(formatTable(headers, rows, colWidths));
   });
 }

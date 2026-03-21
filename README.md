@@ -230,4 +230,4 @@ Config lives at `~/.config/cs/config.json`:
 3. Add `cs sync --quiet &` to each machine's `.bashrc`
 4. Set up SSH key auth between machines (for remote attach)
 
-Now `cs list --all` shows sessions from everywhere, and `cs attach` connects to any of them.
+Now `cs list` shows sessions from all hosts, and `cs attach` connects to any of them.

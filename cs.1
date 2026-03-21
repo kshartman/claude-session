@@ -48,7 +48,10 @@ all hosts. Options:
 Show sessions from this host only.
 .TP
 .BI --host " name"
-Filter to a specific host.
+Filter to a specific host. Accepts short names (e.g.,
+.I dev
+matches
+.IR dev.example.com ).
 .TP
 .BI --project " name"
 Filter by project name.
@@ -240,7 +243,7 @@ See what's running across all machines:
 .PP
 .RS
 .nf
-cs list --all
+cs list
 cs machines
 .fi
 .RE
@@ -249,7 +252,7 @@ Attach to a session running on a different machine:
 .PP
 .RS
 .nf
-cs list --all
+cs list
 cs attach 952d    # auto-SSH if remote
 .fi
 .RE
