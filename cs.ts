@@ -114,7 +114,7 @@ async function tmuxListSessions(): Promise<
   for (const line of result.stdout.split("\n")) {
     if (!line.trim()) continue;
     const [name, attached] = line.split(":");
-    if (name?.startsWith("cs-")) {
+    if (name) {
       sessions.set(name, { name, attached: attached === "1" });
     }
   }
