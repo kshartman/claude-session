@@ -607,16 +607,23 @@ async function cmdAttach(
     });
     await proc.exited;
   } else {
-    // Remote: check if tmux session exists, adopt if not, then attach
+    // Remote: ensure session exists, then attach in a clean SSH
     console.log(`Connecting to ${machineColor(session.machine)}...`);
-    const sshCmd = [
-      "ssh", session.machine, "-t",
+
+    // Step 1: ensure tmux session exists on remote (non-interactive)
+    const ensure = Bun.spawn([
+      "ssh", session.machine,
       "bash", "-lc",
       `tmux has-session -t '${tmuxSession}' 2>/dev/null || ` +
-      `tmux new-session -d -s '${tmuxSession}' -c '${session.project_path}' 'bash -lc "claude --resume ${session.session_id}"'; ` +
-      `tmux attach-session -t '${tmuxSession}'`,
-    ];
-    const proc = Bun.spawn(sshCmd, {
+      `tmux new-session -d -s '${tmuxSession}' -c '${session.project_path}' 'bash -lc "claude --resume ${session.session_id}"'`,
+    ], { stdout: "pipe", stderr: "pipe" });
+    await ensure.exited;
+
+    // Step 2: attach with a clean TTY
+    const proc = Bun.spawn([
+      "ssh", session.machine, "-t",
+      "tmux", "attach-session", "-t", tmuxSession,
+    ], {
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",

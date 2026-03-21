@@ -29131,15 +29131,23 @@ async function cmdAttach(config, prefix) {
     await proc.exited;
   } else {
     console.log(`Connecting to ${machineColor(session.machine)}...`);
-    const sshCmd = [
+    const ensure = Bun.spawn([
+      "ssh",
+      session.machine,
+      "bash",
+      "-lc",
+      `tmux has-session -t '${tmuxSession}' 2>/dev/null || ` + `tmux new-session -d -s '${tmuxSession}' -c '${session.project_path}' 'bash -lc "claude --resume ${session.session_id}"'`
+    ], { stdout: "pipe", stderr: "pipe" });
+    await ensure.exited;
+    const proc = Bun.spawn([
       "ssh",
       session.machine,
       "-t",
-      "bash",
-      "-lc",
-      `tmux has-session -t '${tmuxSession}' 2>/dev/null || ` + `tmux new-session -d -s '${tmuxSession}' -c '${session.project_path}' 'bash -lc "claude --resume ${session.session_id}"'; ` + `tmux attach-session -t '${tmuxSession}'`
-    ];
-    const proc = Bun.spawn(sshCmd, {
+      "tmux",
+      "attach-session",
+      "-t",
+      tmuxSession
+    ], {
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit"
