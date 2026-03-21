@@ -1266,14 +1266,24 @@ async function cmdUpdate(): Promise<void> {
 
   console.log(`Updated to cs v${remoteVersion}`);
 
-  // Check if cron sync is set up
+  // Offer to set up cron sync (once)
+  const cronOffered = join(homedir(), ".config", "cs", ".cron-offered");
   try {
-    const cron = Bun.spawnSync(["bash", "-c", "crontab -l 2>/dev/null"]);
-    const cronOut = cron.stdout.toString();
-    if (!cronOut.includes("cs sync")) {
-      const cronCmd = `*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null`;
-      console.log(yellow(`\nNo cron sync detected.`) + ` Set up automatic sync:`);
-      console.log(`  (crontab -l 2>/dev/null; echo '${cronCmd}') | crontab -`);
+    if (!existsSync(cronOffered)) {
+      const cron = Bun.spawnSync(["bash", "-c", "crontab -l 2>/dev/null"]);
+      const cronOut = cron.stdout.toString();
+      if (!cronOut.includes("cs sync")) {
+        const cronCmd = `*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null`;
+        process.stdout.write(`\nSet up automatic sync (cron every 5 min)? [Y/n] `);
+        const buf = Buffer.alloc(10);
+        const n = require("fs").readSync(0, buf, 0, 10);
+        const answer = buf.slice(0, n).toString().trim().toLowerCase();
+        if (answer === "" || answer === "y" || answer === "yes") {
+          Bun.spawnSync(["bash", "-c", `(crontab -l 2>/dev/null; echo '${cronCmd}') | crontab -`]);
+          console.log(`Added cron: sync every 5 minutes`);
+        }
+        await Bun.write(cronOffered, new Date().toISOString());
+      }
     }
   } catch {
     // crontab not available — skip
