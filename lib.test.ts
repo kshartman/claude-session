@@ -200,6 +200,6 @@ describe("colors", () => {
     expect(stateColor("WAITING")).toContain("WAITING");
     expect(stateColor("IDLE")).toContain("IDLE");
     expect(stateColor("DEAD")).toContain("DEAD");
-    expect(stateColor(null)).toContain("unknown");
+    expect(stateColor(null)).toContain("NONE");
   });
 });

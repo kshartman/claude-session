@@ -28565,7 +28565,7 @@ function machineColor(machine) {
 }
 function stateColor(state) {
   if (!state)
-    return dim("unknown");
+    return dim("NONE");
   switch (state) {
     case "WORKING":
       return green(state);

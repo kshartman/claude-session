@@ -159,7 +159,7 @@ export function machineColor(machine: string): string {
 }
 
 export function stateColor(state: SessionState | null): string {
-  if (!state) return dim("unknown");
+  if (!state) return dim("NONE");
   switch (state) {
     case "WORKING":
       return green(state);
