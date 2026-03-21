@@ -342,11 +342,12 @@ async function cmdDashboard(config: CsConfig): Promise<void> {
   // Recent sessions from DB
   if (dbSessions && dbSessions.length > 0) {
     console.log(bold("Recent Sessions:"));
-    const headers = ["PROJECT", "ID", "STATE", "UPDATED", "TITLE"];
-    const colWidths = [14, 8, 8, 10, 30];
+    const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
+    const colWidths = [14, 8, 14, 8, 10, 30];
     const rows = dbSessions.map((s) => [
       staleText(s.project_name, s.updated_at),
       dim(shortId(s.session_id)),
+      machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]!),
       s.tmux_session && liveStates.has(s.tmux_session)
         ? stateColor(liveStates.get(s.tmux_session) ?? null)
         : stateColor(s.state ?? null),
