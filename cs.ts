@@ -1218,6 +1218,33 @@ async function cmdPurge(
 
 const BASE_URL = "https://git.bogometer.com/shartman/claude-session/-/raw/main";
 
+function ensureCron(): void {
+  try {
+    let noCron = false;
+    try {
+      const cfg = loadConfig();
+      noCron = cfg.noCron === true;
+    } catch { /* config not available */ }
+
+    if (!noCron) {
+      const cron = Bun.spawnSync(["bash", "-c", "crontab -l 2>/dev/null"]);
+      const cronOut = cron.stdout.toString();
+      if (!cronOut.includes("cs sync")) {
+        const cronLine = '*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null';
+        const script = `existing=$(crontab -l 2>/dev/null)\nprintf '%s\\n%s\\n' "$existing" '${cronLine}' | crontab -`;
+        const result = Bun.spawnSync(["bash", "-c", script]);
+        if (result.exitCode === 0) {
+          console.log(`Added cron: sync every 5 minutes`);
+        } else {
+          console.log(dim(`Could not add cron entry — add manually: ${cronLine}`));
+        }
+      }
+    }
+  } catch {
+    // crontab not available — skip
+  }
+}
+
 async function cmdUpdate(): Promise<void> {
   // Fetch remote version
   let remoteVersion: string;
@@ -1232,6 +1259,7 @@ async function cmdUpdate(): Promise<void> {
 
   if (remoteVersion === VERSION) {
     console.log(`cs v${VERSION} is up to date.`);
+    ensureCron();
     return;
   }
 
@@ -1265,32 +1293,7 @@ async function cmdUpdate(): Promise<void> {
   }
 
   console.log(`Updated to cs v${remoteVersion}`);
-
-  // Ensure cron sync is set up (unless noCron in config)
-  try {
-    let noCron = false;
-    try {
-      const cfg = loadConfig();
-      noCron = cfg.noCron === true;
-    } catch { /* config not available */ }
-
-    if (!noCron) {
-      const cron = Bun.spawnSync(["bash", "-c", "crontab -l 2>/dev/null"]);
-      const cronOut = cron.stdout.toString();
-      if (!cronOut.includes("cs sync")) {
-        const cronLine = '*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null';
-        const script = `existing=$(crontab -l 2>/dev/null)\nprintf '%s\\n%s\\n' "$existing" '${cronLine}' | crontab -`;
-        const result = Bun.spawnSync(["bash", "-c", script]);
-        if (result.exitCode === 0) {
-          console.log(`Added cron: sync every 5 minutes`);
-        } else {
-          console.log(dim(`Could not add cron entry — add manually: ${cronLine}`));
-        }
-      }
-    }
-  } catch {
-    // crontab not available — skip
-  }
+  ensureCron();
 }
 
 // --- usage ---

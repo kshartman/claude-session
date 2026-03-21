@@ -29557,6 +29557,30 @@ Run with --yes to confirm.`);
   console.log(`  Purged ${red(session.title ?? shortId(session.session_id))} from ${session.machine}`);
 }
 var BASE_URL = "https://git.bogometer.com/shartman/claude-session/-/raw/main";
+function ensureCron() {
+  try {
+    let noCron = false;
+    try {
+      const cfg = loadConfig();
+      noCron = cfg.noCron === true;
+    } catch {}
+    if (!noCron) {
+      const cron = Bun.spawnSync(["bash", "-c", "crontab -l 2>/dev/null"]);
+      const cronOut = cron.stdout.toString();
+      if (!cronOut.includes("cs sync")) {
+        const cronLine = '*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null';
+        const script = `existing=$(crontab -l 2>/dev/null)
+printf '%s\\n%s\\n' "$existing" '${cronLine}' | crontab -`;
+        const result = Bun.spawnSync(["bash", "-c", script]);
+        if (result.exitCode === 0) {
+          console.log(`Added cron: sync every 5 minutes`);
+        } else {
+          console.log(dim(`Could not add cron entry \u2014 add manually: ${cronLine}`));
+        }
+      }
+    }
+  } catch {}
+}
 async function cmdUpdate() {
   let remoteVersion;
   try {
@@ -29570,6 +29594,7 @@ async function cmdUpdate() {
   }
   if (remoteVersion === VERSION) {
     console.log(`cs v${VERSION} is up to date.`);
+    ensureCron();
     return;
   }
   console.log(`Updating cs v${VERSION} \u2192 v${remoteVersion}...`);
@@ -29596,28 +29621,7 @@ async function cmdUpdate() {
     }
   } catch {}
   console.log(`Updated to cs v${remoteVersion}`);
-  try {
-    let noCron = false;
-    try {
-      const cfg = loadConfig();
-      noCron = cfg.noCron === true;
-    } catch {}
-    if (!noCron) {
-      const cron = Bun.spawnSync(["bash", "-c", "crontab -l 2>/dev/null"]);
-      const cronOut = cron.stdout.toString();
-      if (!cronOut.includes("cs sync")) {
-        const cronLine = '*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null';
-        const script = `existing=$(crontab -l 2>/dev/null)
-printf '%s\\n%s\\n' "$existing" '${cronLine}' | crontab -`;
-        const result = Bun.spawnSync(["bash", "-c", script]);
-        if (result.exitCode === 0) {
-          console.log(`Added cron: sync every 5 minutes`);
-        } else {
-          console.log(dim(`Could not add cron entry \u2014 add manually: ${cronLine}`));
-        }
-      }
-    }
-  } catch {}
+  ensureCron();
 }
 function printUsage() {
   console.log(`${bold("cs")} \u2014 Claude Session Manager
