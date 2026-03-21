@@ -29134,13 +29134,25 @@ async function cmdAttach(config, prefix) {
     const detachHint = config.showDetachHint ? await getDetachHint() : "";
     const statusLeft = detachHint ? `[${tmuxSession}] detach: ${detachHint}` : `[${tmuxSession}]`;
     const barCmds = `tmux set-option -t '${tmuxSession}' window-status-format '' 2>/dev/null; ` + `tmux set-option -t '${tmuxSession}' window-status-current-format '' 2>/dev/null; ` + `tmux set-option -t '${tmuxSession}' status-right '' 2>/dev/null; ` + `tmux set-option -t '${tmuxSession}' status-left-length 80 2>/dev/null; ` + `tmux set-option -t '${tmuxSession}' status-left ' ${statusLeft}' 2>/dev/null`;
+    const script = [
+      `#!/bin/bash`,
+      `source ~/.bash_profile 2>/dev/null || source ~/.bashrc 2>/dev/null`,
+      `tmux has-session -t '${tmuxSession}' 2>/dev/null && exit 0`,
+      `cd '${session.project_path}' 2>/dev/null`,
+      `tmux new-session -d -s '${tmuxSession}' claude --resume '${session.session_id}'`,
+      barCmds
+    ].join(`
+`);
     const ensure = Bun.spawn([
       "ssh",
       session.machine,
       "bash",
-      "-lc",
-      `tmux has-session -t '${tmuxSession}' 2>/dev/null || ` + `tmux new-session -d -s '${tmuxSession}' -c '${session.project_path}' 'bash -lc "claude --resume ${session.session_id}"'; ` + barCmds
-    ], { stdout: "pipe", stderr: "pipe" });
+      "-s"
+    ], {
+      stdin: new Response(script),
+      stdout: "pipe",
+      stderr: "pipe"
+    });
     await ensure.exited;
     const proc = Bun.spawn([
       "ssh",
