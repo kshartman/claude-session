@@ -29708,19 +29708,31 @@ Updating ${remoteHosts.length} remote host(s)...`);
   for (const host of remoteHosts) {
     const shortName = host.split(".")[0];
     process.stdout.write(`  ${shortName}: `);
-    const proc = Bun.spawn([
-      "ssh",
-      host,
-      "-o",
-      "ConnectTimeout=5",
-      "PATH=$HOME/.local/bin:$HOME/.bun/bin:$PATH cs update"
-    ], { stdout: "pipe", stderr: "pipe" });
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-    if (exitCode === 0) {
-      console.log(stdout.trim().split(`
+    const candidates = [host, host.toLowerCase()];
+    if (shortName !== host)
+      candidates.push(shortName, shortName.toLowerCase());
+    const tryHosts = [...new Set(candidates)];
+    let success = false;
+    for (const tryHost of tryHosts) {
+      const proc = Bun.spawn([
+        "ssh",
+        tryHost,
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "BatchMode=yes",
+        "PATH=$HOME/.local/bin:$HOME/.bun/bin:$PATH cs update"
+      ], { stdout: "pipe", stderr: "pipe" });
+      const stdout = await new Response(proc.stdout).text();
+      const exitCode = await proc.exited;
+      if (exitCode === 0) {
+        console.log(stdout.trim().split(`
 `).pop() ?? "done");
-    } else {
+        success = true;
+        break;
+      }
+    }
+    if (!success) {
       console.log(red("failed"));
     }
   }
