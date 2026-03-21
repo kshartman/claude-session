@@ -80,13 +80,18 @@ else
   echo "  Config exists at $CONFIG_FILE"
 fi
 
-# Set up cron sync if not already present
-CRON_CMD="PATH=\"\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH\" cs sync --quiet 2>/dev/null"
-if crontab -l 2>/dev/null | grep -q "cs sync"; then
-  echo "  Cron sync already configured"
+# Set up cron sync if not already present (unless noCron in config)
+NO_CRON=$(grep -o '"noCron":\s*true' "$CONFIG_FILE" 2>/dev/null || true)
+if [ -n "$NO_CRON" ]; then
+  echo "  Cron sync disabled (noCron in config)"
 else
-  (crontab -l 2>/dev/null; echo "*/5 * * * * $CRON_CMD") | crontab -
-  echo "  Added cron: sync every 5 minutes"
+  CRON_CMD="PATH=\"\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH\" cs sync --quiet 2>/dev/null"
+  if crontab -l 2>/dev/null | grep -q "cs sync"; then
+    echo "  Cron sync already configured"
+  else
+    (crontab -l 2>/dev/null; echo "*/5 * * * * $CRON_CMD") | crontab -
+    echo "  Added cron: sync every 5 minutes"
+  fi
 fi
 
 # Check PATH
