@@ -29475,6 +29475,65 @@ async function cmdDeleted(config) {
     console.log(formatTable(headers, rows, colWidths));
   });
 }
+async function cmdPurge(config, prefix, confirm) {
+  const session = await withDb(config, async (_db, sessions) => {
+    const all = await sessions.find({ $or: [
+      { session_id: { $regex: `^${escapeRegex(prefix)}` } },
+      { title: prefix },
+      { title: { $regex: escapeRegex(prefix), $options: "i" } }
+    ] }).toArray();
+    let matches = all.filter((r) => r.session_id.startsWith(prefix));
+    if (matches.length === 0)
+      matches = all;
+    if (matches.length === 0) {
+      console.error(`No session found matching '${prefix}'`);
+      process.exit(1);
+    }
+    if (matches.length > 1) {
+      console.error(`Ambiguous match for '${prefix}'. Did you mean:`);
+      for (const m of matches) {
+        console.error(`  ${shortId(m.session_id)}  ${m.project_name}  ${m.machine}  ${m.title ?? ""}`);
+      }
+      process.exit(1);
+    }
+    return matches[0];
+  });
+  const claudeDir = join2(homedir2(), ".claude", "projects");
+  const pathHash = `-${session.project_path.slice(1).replace(/[/.]/g, "-")}`;
+  const jsonlPath = join2(claudeDir, pathHash, `${session.session_id}.jsonl`);
+  const sessionDir = join2(claudeDir, pathHash, session.session_id);
+  if (!confirm) {
+    console.log(`Would purge:
+`);
+    console.log(`  Session:  ${session.title ?? shortId(session.session_id)}`);
+    console.log(`  Machine:  ${session.machine}`);
+    console.log(`  Project:  ${session.project_path}`);
+    console.log(`  JSONL:    ${existsSync2(jsonlPath) ? jsonlPath : dim("(not on this machine)")}`);
+    console.log(`  Dir:      ${existsSync2(sessionDir) ? sessionDir : dim("(not on this machine)")}`);
+    console.log(`  MongoDB:  record will be deleted`);
+    console.log(`
+Run with --yes to confirm.`);
+    return;
+  }
+  if (session.tmux_session) {
+    await tmuxRun("kill-session", "-t", session.tmux_session);
+  }
+  const tmuxSession = tmuxName(session.session_id, session.title, session.project_name);
+  await tmuxRun("kill-session", "-t", tmuxSession);
+  const { rmSync } = await import("fs");
+  if (existsSync2(jsonlPath)) {
+    rmSync(jsonlPath);
+    console.log(`  Deleted ${jsonlPath}`);
+  }
+  if (existsSync2(sessionDir)) {
+    rmSync(sessionDir, { recursive: true });
+    console.log(`  Deleted ${sessionDir}/`);
+  }
+  await withDb(config, async (_db, sessions) => {
+    await sessions.deleteOne({ session_id: session.session_id, machine: session.machine });
+  });
+  console.log(`  Purged ${red(session.title ?? shortId(session.session_id))} from ${session.machine}`);
+}
 var BASE_URL = "https://git.bogometer.com/shartman/claude-session/-/raw/main";
 async function cmdUpdate() {
   let remoteVersion;
@@ -29537,6 +29596,7 @@ ${bold("Usage:")}
   cs rm --undo <id-or-name>       Restore a soft-deleted session
   cs prune [--days N] [--all]     Bulk soft-delete unnamed/untagged sessions
   cs deleted                      List soft-deleted sessions
+  cs purge <id-or-name> [--yes]   Hard delete session + local files (irreversible)
   cs update                       Update cs to latest version
   cs version                      Show current version
 
@@ -29682,6 +29742,16 @@ async function main() {
     case "deleted":
       await cmdDeleted(config);
       break;
+    case "purge": {
+      const yes = args.includes("--yes");
+      const prefix = args.filter((a) => a !== "--yes")[1];
+      if (!prefix) {
+        console.error("Usage: cs purge <id-or-name> [--yes]");
+        process.exit(1);
+      }
+      await cmdPurge(config, prefix, yes);
+      break;
+    }
     default:
       console.error(`Unknown command: ${command}
 `);
