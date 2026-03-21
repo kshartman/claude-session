@@ -29137,6 +29137,7 @@ async function cmdAttach(config, prefix) {
     const script = [
       `#!/bin/bash`,
       `source ~/.bash_profile 2>/dev/null || source ~/.bashrc 2>/dev/null`,
+      `export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"`,
       `tmux has-session -t '${tmuxSession}' 2>/dev/null && exit 0`,
       `cd '${session.project_path}' 2>/dev/null`,
       `tmux new-session -d -s '${tmuxSession}' claude --resume '${session.session_id}'`,
