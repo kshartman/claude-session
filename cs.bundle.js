@@ -29116,16 +29116,17 @@ async function configureTmuxBar(config, tmuxSession) {
   await tmuxRun("set-option", "-t", tmuxSession, "window-status-format", "");
   await tmuxRun("set-option", "-t", tmuxSession, "window-status-current-format", "");
   await tmuxRun("set-option", "-t", tmuxSession, "status-right", "");
-  let statusLeft = `[${tmuxSession}]`;
+  const shortHost = hostname().split(".")[0];
+  let statusLeft = `[${shortHost}:${tmuxSession}]`;
   if (config.showDetachHint) {
     const prefixResult = await tmuxRun("show-options", "-gv", "prefix");
     const prefix = prefixResult.exitCode === 0 && prefixResult.stdout ? prefixResult.stdout.trim() : "C-b";
     const keyMap = {
-      "C-b": "Ctrl-b",
-      "C-a": "Ctrl-a",
-      "C-^": "Ctrl-6",
-      "C-s": "Ctrl-s",
-      "C-q": "Ctrl-q"
+      "C-b": "C-b",
+      "C-a": "C-a",
+      "C-^": "C-6",
+      "C-s": "C-s",
+      "C-q": "C-q"
     };
     const pfx = keyMap[prefix] ?? prefix;
     const hints = [];
