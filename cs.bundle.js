@@ -29596,12 +29596,13 @@ async function cmdUpdate() {
   } catch {}
   console.log(`Updated to cs v${remoteVersion}`);
   try {
-    const cron = Bun.spawnSync(["crontab", "-l"]);
+    const cron = Bun.spawnSync(["bash", "-c", "crontab -l 2>/dev/null"]);
     const cronOut = cron.stdout.toString();
     if (!cronOut.includes("cs sync")) {
+      const cronCmd = `*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null`;
       console.log(yellow(`
-No cron sync detected. Set up automatic sync:
-  (crontab -l 2>/dev/null; echo '*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null') | crontab -`));
+No cron sync detected.`) + ` Set up automatic sync:`);
+      console.log(`  (crontab -l 2>/dev/null; echo '${cronCmd}') | crontab -`);
     }
   } catch {}
 }

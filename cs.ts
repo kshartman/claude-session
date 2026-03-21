@@ -1268,13 +1268,12 @@ async function cmdUpdate(): Promise<void> {
 
   // Check if cron sync is set up
   try {
-    const cron = Bun.spawnSync(["crontab", "-l"]);
+    const cron = Bun.spawnSync(["bash", "-c", "crontab -l 2>/dev/null"]);
     const cronOut = cron.stdout.toString();
     if (!cronOut.includes("cs sync")) {
-      console.log(yellow(
-        `\nNo cron sync detected. Set up automatic sync:\n` +
-        `  (crontab -l 2>/dev/null; echo '*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null') | crontab -`
-      ));
+      const cronCmd = `*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null`;
+      console.log(yellow(`\nNo cron sync detected.`) + ` Set up automatic sync:`);
+      console.log(`  (crontab -l 2>/dev/null; echo '${cronCmd}') | crontab -`);
     }
   } catch {
     // crontab not available — skip
