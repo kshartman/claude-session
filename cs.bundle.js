@@ -29288,7 +29288,7 @@ async function cmdInfo(config, prefix) {
   }
   console.log(`  Synced:    ${session.synced_at.toISOString()}`);
 }
-async function cmdMachines(config) {
+async function cmdHosts(config) {
   await withDb(config, async (_db, sessions) => {
     const pipeline = [
       {
@@ -29302,10 +29302,10 @@ async function cmdMachines(config) {
     ];
     const results = await sessions.aggregate(pipeline).toArray();
     if (results.length === 0) {
-      console.log("No machines found. Run 'cs sync' first.");
+      console.log("No hosts found. Run 'cs sync' first.");
       return;
     }
-    const headers = ["MACHINE", "SESSIONS", "LAST SEEN"];
+    const headers = ["HOST", "SESSIONS", "LAST SEEN"];
     const colWidths = [25, 10, 12];
     const rows = results.map((r) => [
       machineColor(r["_id"]),
@@ -29497,7 +29497,7 @@ ${bold("Usage:")}
   cs status                       Live tmux session states
   cs tag <id-prefix> <label>      Tag a session
   cs info <id-prefix>             Show session details
-  cs machines                     List machines with session counts
+  cs hosts                        List hosts with session counts
   cs rm <id-or-name>              Soft-delete a session
   cs rm --undo <id-or-name>       Restore a soft-deleted session
   cs prune [--days N] [--all]     Bulk soft-delete unnamed/untagged sessions
@@ -29624,8 +29624,8 @@ async function main() {
       await cmdInfo(config, prefix);
       break;
     }
-    case "machines":
-      await cmdMachines(config);
+    case "hosts":
+      await cmdHosts(config);
       break;
     case "rm": {
       const undo = args.includes("--undo");
