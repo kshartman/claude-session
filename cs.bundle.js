@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.4.9";
+var VERSION = "1.4.10";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29632,14 +29632,20 @@ function purgeOneSession(session, claudeDir) {
   }
   return { jsonlPath, sessionDir, deleted };
 }
-async function cmdPurge(config, pattern, confirm, all) {
+async function cmdPurge(config, pattern, confirm, all, host, deletedOnly) {
   const machine = hostname();
   const claudeDir = join2(homedir2(), ".claude", "projects");
   await withDb(config, async (_db, sessions) => {
+    const hostFilter = {};
+    if (host) {
+      hostFilter["machine"] = host.includes(".") ? { $regex: `^${escapeRegex(host)}$`, $options: "i" } : { $regex: `^${escapeRegex(host)}(\\.|$)`, $options: "i" };
+    }
+    const delFilter = deletedOnly ? { deleted_at: { $ne: null } } : {};
     let matches;
     if (all) {
+      const baseFilter = { ...hostFilter, ...delFilter };
       matches = await sessions.find({
-        machine,
+        ...baseFilter,
         $or: [
           { session_id: { $regex: `^${escapeRegex(pattern)}` } },
           { title: { $regex: escapeRegex(pattern), $options: "i" } },
@@ -29679,7 +29685,7 @@ async function cmdPurge(config, pattern, confirm, all) {
       console.log(`No sessions matching '${pattern}' on this host.`);
       return;
     }
-    const nonLocal = matches.filter((m) => m.machine !== machine);
+    const nonLocal = matches.filter((m) => m.machine.toLowerCase() !== machine.toLowerCase());
     if (nonLocal.length > 0 && confirm) {
       console.error(`Cannot purge ${nonLocal.length} session(s) on other hosts. Run cs purge there.`);
       const localOnly = matches.filter((m) => m.machine.toLowerCase() === machine.toLowerCase());
@@ -29866,7 +29872,8 @@ ${bold("Usage:")}
   cs prune [--days N] [--all]     Bulk soft-delete unnamed/untagged sessions
   cs deleted                      List soft-deleted sessions
   cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
-  cs purge <pattern> --all [--yes] Bulk hard delete matching sessions
+  cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
+                                  Bulk hard delete matching sessions
   cs update                       Update cs to latest version
   cs update --all                 Update cs on all known hosts via SSH
   cs version                      Show current version
@@ -30047,12 +30054,15 @@ async function main() {
     case "purge": {
       const yes = args.includes("--yes");
       const all = args.includes("--all");
-      const pattern = args.filter((a) => !a.startsWith("--"))[1];
+      const deletedOnly = args.includes("--deleted");
+      const hostIdx = args.indexOf("--host");
+      const purgeHost = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
+      const pattern = args.filter((a) => !a.startsWith("--") && a !== purgeHost)[1];
       if (!pattern) {
-        console.error("Usage: cs purge <pattern> [--yes] [--all]");
+        console.error("Usage: cs purge <pattern> [--yes] [--all] [--host <name>] [--deleted]");
         process.exit(1);
       }
-      await cmdPurge(config, pattern, yes, all);
+      await cmdPurge(config, pattern, yes, all, purgeHost, deletedOnly);
       break;
     }
     default:
