@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.4.5";
+var VERSION = "1.4.6";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29100,18 +29100,6 @@ async function resolveSession(config, prefix, host) {
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-async function getDetachHint() {
-  const result = await tmuxRun("show-options", "-gv", "prefix");
-  const prefix = result.exitCode === 0 && result.stdout ? result.stdout.trim() : "C-b";
-  const keyMap = {
-    "C-b": "Ctrl-b d",
-    "C-a": "Ctrl-a d",
-    "C-^": "Ctrl-6 d",
-    "C-s": "Ctrl-s d",
-    "C-q": "Ctrl-q d"
-  };
-  return keyMap[prefix] ?? `${prefix} d`;
-}
 async function configureTmuxBar(config, tmuxSession) {
   await tmuxRun("set-option", "-t", tmuxSession, "window-status-format", "");
   await tmuxRun("set-option", "-t", tmuxSession, "window-status-current-format", "");
@@ -29167,6 +29155,20 @@ async function cmdAttach(config, prefix, host) {
       }
     }
     await configureTmuxBar(config, tmuxSession);
+    const authSockSymlink = join2(homedir2(), ".ssh", "auth_sock");
+    const authSock = process.env["SSH_AUTH_SOCK"];
+    if (authSock && authSock !== authSockSymlink) {
+      try {
+        const { symlinkSync, unlinkSync } = await import("fs");
+        try {
+          unlinkSync(authSockSymlink);
+        } catch {}
+        symlinkSync(authSock, authSockSymlink);
+      } catch {}
+    }
+    if (existsSync2(authSockSymlink)) {
+      await tmuxRun("set-environment", "-g", "SSH_AUTH_SOCK", authSockSymlink);
+    }
     const tmuxCmd = insideTmux ? ["tmux", "switch-client", "-t", tmuxSession] : ["tmux", "attach-session", "-t", tmuxSession];
     const proc = Bun.spawn(tmuxCmd, {
       stdin: "inherit",
@@ -29176,18 +29178,34 @@ async function cmdAttach(config, prefix, host) {
     await proc.exited;
   } else {
     console.log(`Connecting to ${machineColor(session.machine)}...`);
-    const detachHint = config.showDetachHint ? await getDetachHint() : "";
-    const statusLeft = detachHint ? `[${tmuxSession}] detach: ${detachHint}` : `[${tmuxSession}]`;
-    const barCmds = `tmux set-option -t '${tmuxSession}' window-status-format '' 2>/dev/null; ` + `tmux set-option -t '${tmuxSession}' window-status-current-format '' 2>/dev/null; ` + `tmux set-option -t '${tmuxSession}' status-right '' 2>/dev/null; ` + `tmux set-option -t '${tmuxSession}' status-left-length 80 2>/dev/null; ` + `tmux set-option -t '${tmuxSession}' status-left ' ${statusLeft}' 2>/dev/null`;
     const script = [
       `#!/bin/bash`,
       `source ~/.bash_profile 2>/dev/null || source ~/.bashrc 2>/dev/null`,
       `export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"`,
-      `tmux has-session -t '${tmuxSession}' 2>/dev/null && exit 0`,
-      `cd '${session.project_path}' 2>/dev/null`,
-      `tmux new-session -d -s '${tmuxSession}' claude --resume '${session.session_id}'`,
-      barCmds
-    ].join(`
+      `if ! tmux has-session -t '${tmuxSession}' 2>/dev/null; then`,
+      `  cd '${session.project_path}' 2>/dev/null`,
+      `  tmux new-session -d -s '${tmuxSession}' claude --resume '${session.session_id}'`,
+      `  [ -f ~/.tmux.conf ] && tmux source-file ~/.tmux.conf 2>/dev/null`,
+      `fi`,
+      `PREFIX=$(tmux show-options -gv prefix 2>/dev/null || echo C-b)`,
+      `case "$PREFIX" in`,
+      `  C-b) PFX="C-b" ;; C-a) PFX="C-a" ;; "C-^") PFX="C-6" ;; *) PFX="$PREFIX" ;;`,
+      `esac`,
+      `HOST=$(hostname | cut -d. -f1)`,
+      `BAR="[$HOST:${tmuxSession}]"`,
+      config.showDetachHint ? [
+        `BAR="$BAR help: $PFX ? | detach: $PFX d"`,
+        `MOUSE=$(tmux show-options -gv mouse 2>/dev/null)`,
+        `[ "$MOUSE" = "on" ] && BAR="$BAR | mouse: shift+click"`,
+        `BAR="$BAR | scroll: $PFX ["`
+      ].join(`
+`) : ``,
+      `tmux set-option -t '${tmuxSession}' window-status-format '' 2>/dev/null`,
+      `tmux set-option -t '${tmuxSession}' window-status-current-format '' 2>/dev/null`,
+      `tmux set-option -t '${tmuxSession}' status-right '' 2>/dev/null`,
+      `tmux set-option -t '${tmuxSession}' status-left-length 120 2>/dev/null`,
+      `tmux set-option -t '${tmuxSession}' status-left " $BAR" 2>/dev/null`
+    ].filter(Boolean).join(`
 `);
     const ensure = Bun.spawn([
       "ssh",
@@ -29379,7 +29397,7 @@ async function cmdAdopt(config, prefix, attach) {
   const machine = hostname();
   if (session.machine !== machine) {
     console.error(`Session ${shortId(session.session_id)} is on ${session.machine}, not this machine.
-` + `You can only adopt local sessions.`);
+You can only adopt local sessions.`);
     process.exit(1);
   }
   if (session.tmux_session) {
@@ -29407,7 +29425,7 @@ async function cmdAdopt(config, prefix, attach) {
     await sessions.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { tmux_session: tmuxSession, state: "IDLE" } });
   });
   console.log(`Adopted ${bold(session.title ?? shortId(session.session_id))} as ${green(tmuxSession)}
-` + `Claude is resuming in a detached tmux session.`);
+Claude is resuming in a detached tmux session.`);
   if (attach) {
     await configureTmuxBar(config, tmuxSession);
     console.log(`Attaching...

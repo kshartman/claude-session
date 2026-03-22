@@ -566,18 +566,6 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-async function getDetachHint(): Promise<string> {
-  const result = await tmuxRun("show-options", "-gv", "prefix");
-  const prefix = result.exitCode === 0 && result.stdout ? result.stdout.trim() : "C-b";
-  const keyMap: Record<string, string> = {
-    "C-b": "Ctrl-b d",
-    "C-a": "Ctrl-a d",
-    "C-^": "Ctrl-6 d",
-    "C-s": "Ctrl-s d",
-    "C-q": "Ctrl-q d",
-  };
-  return keyMap[prefix] ?? `${prefix} d`;
-}
 
 async function configureTmuxBar(
   config: CsConfig,
@@ -685,29 +673,36 @@ async function cmdAttach(
     // Remote: ensure session exists, then attach in a clean SSH
     console.log(`Connecting to ${machineColor(session.machine)}...`);
 
-    // Step 1: ensure tmux session exists on remote + configure status bar
-    const detachHint = config.showDetachHint ? await getDetachHint() : "";
-    const statusLeft = detachHint
-      ? `[${tmuxSession}] detach: ${detachHint}`
-      : `[${tmuxSession}]`;
-
-    const barCmds =
-      `tmux set-option -t '${tmuxSession}' window-status-format '' 2>/dev/null; ` +
-      `tmux set-option -t '${tmuxSession}' window-status-current-format '' 2>/dev/null; ` +
-      `tmux set-option -t '${tmuxSession}' status-right '' 2>/dev/null; ` +
-      `tmux set-option -t '${tmuxSession}' status-left-length 80 2>/dev/null; ` +
-      `tmux set-option -t '${tmuxSession}' status-left ' ${statusLeft}' 2>/dev/null`;
-
     // Write a helper script on the remote to avoid quoting hell
+    // It creates the session if needed, sources .tmux.conf, and configures the bar
     const script = [
       `#!/bin/bash`,
       `source ~/.bash_profile 2>/dev/null || source ~/.bashrc 2>/dev/null`,
       `export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"`,
-      `tmux has-session -t '${tmuxSession}' 2>/dev/null && exit 0`,
-      `cd '${session.project_path}' 2>/dev/null`,
-      `tmux new-session -d -s '${tmuxSession}' claude --resume '${session.session_id}'`,
-      barCmds,
-    ].join("\n");
+      `if ! tmux has-session -t '${tmuxSession}' 2>/dev/null; then`,
+      `  cd '${session.project_path}' 2>/dev/null`,
+      `  tmux new-session -d -s '${tmuxSession}' claude --resume '${session.session_id}'`,
+      `  [ -f ~/.tmux.conf ] && tmux source-file ~/.tmux.conf 2>/dev/null`,
+      `fi`,
+      // Configure bar using remote tmux prefix (not local)
+      `PREFIX=$(tmux show-options -gv prefix 2>/dev/null || echo C-b)`,
+      `case "$PREFIX" in`,
+      `  C-b) PFX="C-b" ;; C-a) PFX="C-a" ;; "C-^") PFX="C-6" ;; *) PFX="$PREFIX" ;;`,
+      `esac`,
+      `HOST=$(hostname | cut -d. -f1)`,
+      `BAR="[$HOST:${tmuxSession}]"`,
+      config.showDetachHint ? [
+        `BAR="$BAR help: $PFX ? | detach: $PFX d"`,
+        `MOUSE=$(tmux show-options -gv mouse 2>/dev/null)`,
+        `[ "$MOUSE" = "on" ] && BAR="$BAR | mouse: shift+click"`,
+        `BAR="$BAR | scroll: $PFX ["`,
+      ].join("\n") : ``,
+      `tmux set-option -t '${tmuxSession}' window-status-format '' 2>/dev/null`,
+      `tmux set-option -t '${tmuxSession}' window-status-current-format '' 2>/dev/null`,
+      `tmux set-option -t '${tmuxSession}' status-right '' 2>/dev/null`,
+      `tmux set-option -t '${tmuxSession}' status-left-length 120 2>/dev/null`,
+      `tmux set-option -t '${tmuxSession}' status-left " $BAR" 2>/dev/null`,
+    ].filter(Boolean).join("\n");
 
     const ensure = Bun.spawn([
       "ssh", session.machine, "bash", "-s",
