@@ -29155,25 +29155,6 @@ async function cmdAttach(config, prefix, host) {
       }
     }
     await configureTmuxBar(config, tmuxSession);
-    const authSockSymlink = join2(homedir2(), ".ssh", "auth_sock");
-    try {
-      const findResult = Bun.spawnSync([
-        "bash",
-        "-c",
-        `find /tmp/ssh-* -user $(id -u) -type s -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2`
-      ]);
-      const liveSock = findResult.stdout.toString().trim();
-      if (liveSock && existsSync2(liveSock)) {
-        const { symlinkSync, unlinkSync } = await import("fs");
-        try {
-          unlinkSync(authSockSymlink);
-        } catch {}
-        symlinkSync(liveSock, authSockSymlink);
-      }
-    } catch {}
-    if (existsSync2(authSockSymlink)) {
-      await tmuxRun("set-environment", "-g", "SSH_AUTH_SOCK", authSockSymlink);
-    }
     await withDb(config, async (_db, sessions) => {
       await sessions.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { tmux_session: tmuxSession, state: "IDLE" } });
     });
@@ -29233,10 +29214,7 @@ async function cmdAttach(config, prefix, host) {
       "ssh",
       session.machine,
       "-t",
-      "tmux",
-      "attach-session",
-      "-t",
-      tmuxSession
+      `tmux set-environment -t '${tmuxSession}' SSH_AUTH_SOCK $SSH_AUTH_SOCK 2>/dev/null; ` + `[ -n "$SSH_AUTH_SOCK" ] && ln -sf $SSH_AUTH_SOCK ~/.ssh/auth_sock 2>/dev/null; ` + `exec tmux attach-session -t '${tmuxSession}'`
     ], {
       stdin: "inherit",
       stdout: "inherit",
@@ -29482,7 +29460,7 @@ async function cmdAdopt(config, prefix, attach) {
   const machine = hostname();
   if (session.machine !== machine) {
     console.error(`Session ${shortId(session.session_id)} is on ${session.machine}, not this machine.
-You can only adopt local sessions.`);
+` + `You can only adopt local sessions.`);
     process.exit(1);
   }
   if (session.tmux_session) {
@@ -29510,7 +29488,7 @@ You can only adopt local sessions.`);
     await sessions.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { tmux_session: tmuxSession, state: "IDLE" } });
   });
   console.log(`Adopted ${bold(session.title ?? shortId(session.session_id))} as ${green(tmuxSession)}
-Claude is resuming in a detached tmux session.`);
+` + `Claude is resuming in a detached tmux session.`);
   if (attach) {
     await configureTmuxBar(config, tmuxSession);
     console.log(`Attaching...
@@ -29649,14 +29627,14 @@ async function cmdPurge(config, pattern, confirm, all, host, deletedOnly) {
     let matches;
     if (all) {
       const baseFilter = { ...hostFilter, ...delFilter };
-      matches = await sessions.find({
-        ...baseFilter,
+      const matchFilter = pattern === "*" ? {} : {
         $or: [
           { session_id: { $regex: `^${escapeRegex(pattern)}` } },
           { title: { $regex: escapeRegex(pattern), $options: "i" } },
           { project_name: { $regex: escapeRegex(pattern), $options: "i" } }
         ]
-      }).toArray();
+      };
+      matches = await sessions.find({ ...baseFilter, ...matchFilter }).toArray();
     } else {
       const found = await sessions.find({ $or: [
         { session_id: { $regex: `^${escapeRegex(pattern)}` } },
@@ -30062,7 +30040,7 @@ async function main() {
       const deletedOnly = args.includes("--deleted");
       const hostIdx = args.indexOf("--host");
       const purgeHost = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
-      const pattern = args.filter((a) => !a.startsWith("--") && a !== purgeHost)[1];
+      const pattern = args.filter((a) => !a.startsWith("--") && a !== purgeHost)[1] ?? (all ? "*" : null);
       if (!pattern) {
         console.error("Usage: cs purge <pattern> [--yes] [--all] [--host <name>] [--deleted]");
         process.exit(1);

@@ -643,25 +643,6 @@ async function cmdAttach(
 
     await configureTmuxBar(config, tmuxSession);
 
-    // Forward SSH agent into tmux so git/ssh work inside sessions
-    // Find the most recent live SSH agent socket and refresh the symlink
-    const authSockSymlink = join(homedir(), ".ssh", "auth_sock");
-    try {
-      const findResult = Bun.spawnSync(["bash", "-c",
-        `find /tmp/ssh-* -user $(id -u) -type s -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2`
-      ]);
-      const liveSock = findResult.stdout.toString().trim();
-      if (liveSock && existsSync(liveSock)) {
-        const { symlinkSync, unlinkSync } = await import("fs");
-        try { unlinkSync(authSockSymlink); } catch { /* may not exist */ }
-        symlinkSync(liveSock, authSockSymlink);
-      }
-    } catch { /* best effort */ }
-    // Set tmux environment to the fixed symlink path
-    if (existsSync(authSockSymlink)) {
-      await tmuxRun("set-environment", "-g", "SSH_AUTH_SOCK", authSockSymlink);
-    }
-
     // Update MongoDB with tmux session name and state
     await withDb(config, async (_db, sessions) => {
       await sessions.updateOne(
@@ -731,10 +712,12 @@ async function cmdAttach(
       );
     });
 
-    // Step 2: attach with a clean TTY
+    // Step 2: attach with a clean TTY, forwarding SSH agent into tmux
     const proc = Bun.spawn([
       "ssh", session.machine, "-t",
-      "tmux", "attach-session", "-t", tmuxSession,
+      `tmux set-environment -t '${tmuxSession}' SSH_AUTH_SOCK \$SSH_AUTH_SOCK 2>/dev/null; ` +
+      `[ -n "\$SSH_AUTH_SOCK" ] && ln -sf \$SSH_AUTH_SOCK ~/.ssh/auth_sock 2>/dev/null; ` +
+      `exec tmux attach-session -t '${tmuxSession}'`,
     ], {
       stdin: "inherit",
       stdout: "inherit",
@@ -1344,15 +1327,15 @@ async function cmdPurge(
     if (all) {
       // Bulk mode: match pattern against session_id prefix, title, or project name
       const baseFilter = { ...hostFilter, ...delFilter };
+      const matchFilter = pattern === "*" ? {} : {
+        $or: [
+          { session_id: { $regex: `^${escapeRegex(pattern)}` } },
+          { title: { $regex: escapeRegex(pattern), $options: "i" } },
+          { project_name: { $regex: escapeRegex(pattern), $options: "i" } },
+        ],
+      };
       matches = await sessions
-        .find({
-          ...baseFilter,
-          $or: [
-            { session_id: { $regex: `^${escapeRegex(pattern)}` } },
-            { title: { $regex: escapeRegex(pattern), $options: "i" } },
-            { project_name: { $regex: escapeRegex(pattern), $options: "i" } },
-          ],
-        })
+        .find({ ...baseFilter, ...matchFilter })
         .toArray();
     } else {
       // Single mode: exact resolve
@@ -1819,7 +1802,7 @@ async function main(): Promise<void> {
       const deletedOnly = args.includes("--deleted");
       const hostIdx = args.indexOf("--host");
       const purgeHost = hostIdx >= 0 ? (args[hostIdx + 1] ?? null) : null;
-      const pattern = args.filter((a) => !a.startsWith("--") && a !== purgeHost)[1];
+      const pattern = args.filter((a) => !a.startsWith("--") && a !== purgeHost)[1] ?? (all ? "*" : null);
       if (!pattern) {
         console.error("Usage: cs purge <pattern> [--yes] [--all] [--host <name>] [--deleted]");
         process.exit(1);
