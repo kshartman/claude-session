@@ -29014,7 +29014,7 @@ async function cmdList(config, opts) {
     if (opts.local) {
       filter["machine"] = hostname();
     } else if (opts.host) {
-      filter["machine"] = opts.host.includes(".") ? opts.host : { $regex: `^${escapeRegex(opts.host)}(\\.|$)` };
+      filter["machine"] = opts.host.includes(".") ? { $regex: `^${escapeRegex(opts.host)}$`, $options: "i" } : { $regex: `^${escapeRegex(opts.host)}(\\.|$)`, $options: "i" };
     }
     if (opts.project) {
       filter["project_name"] = opts.project;
@@ -29064,7 +29064,7 @@ async function resolveSession(config, prefix, host) {
   return withDb(config, async (_db, sessions) => {
     const hostFilter = {};
     if (host) {
-      hostFilter["machine"] = host.includes(".") ? host : { $regex: `^${escapeRegex(host)}(\\.|$)` };
+      hostFilter["machine"] = host.includes(".") ? { $regex: `^${escapeRegex(host)}$`, $options: "i" } : { $regex: `^${escapeRegex(host)}(\\.|$)`, $options: "i" };
     }
     const base = { ...hostFilter, deleted_at: null };
     const byId = await sessions.find({ ...base, session_id: { $regex: `^${escapeRegex(prefix)}` } }).toArray();
@@ -29284,7 +29284,7 @@ async function cmdKill(config, opts) {
     await withDb(config, async (_db, sessions) => {
       const filter = { deleted_at: null };
       if (opts.host) {
-        filter["machine"] = opts.host.includes(".") ? opts.host : { $regex: `^${escapeRegex(opts.host)}(\\.|$)` };
+        filter["machine"] = opts.host.includes(".") ? opts.host : { $regex: `^${escapeRegex(opts.host)}(\\.|$)`, $options: "i" };
       }
       filter["$or"] = [
         { tmux_session: { $ne: null } },
@@ -29587,7 +29587,7 @@ async function cmdDeleted(config, opts) {
     if (opts.local) {
       filter["machine"] = hostname();
     } else if (opts.host) {
-      filter["machine"] = opts.host.includes(".") ? opts.host : { $regex: `^${escapeRegex(opts.host)}(\\.|$)` };
+      filter["machine"] = opts.host.includes(".") ? { $regex: `^${escapeRegex(opts.host)}$`, $options: "i" } : { $regex: `^${escapeRegex(opts.host)}(\\.|$)`, $options: "i" };
     }
     const results = await sessions.find(filter).sort({ deleted_at: -1 }).limit(50).toArray();
     if (results.length === 0) {

@@ -414,8 +414,8 @@ async function cmdList(
     } else if (opts.host) {
       // Match full hostname or short name
       filter["machine"] = opts.host.includes(".")
-        ? opts.host
-        : { $regex: `^${escapeRegex(opts.host)}(\\.|\$)` };
+        ? { $regex: `^${escapeRegex(opts.host)}$`, $options: "i" }
+        : { $regex: `^${escapeRegex(opts.host)}(\\.|\$)`, $options: "i" };
     }
     if (opts.project) {
       filter["project_name"] = opts.project;
@@ -503,8 +503,8 @@ async function resolveSession(
     const hostFilter: Record<string, unknown> = {};
     if (host) {
       hostFilter["machine"] = host.includes(".")
-        ? host
-        : { $regex: `^${escapeRegex(host)}(\\.|\$)` };
+        ? { $regex: `^${escapeRegex(host)}$`, $options: "i" }
+        : { $regex: `^${escapeRegex(host)}(\\.|\$)`, $options: "i" };
     }
 
     const base = { ...hostFilter, deleted_at: null };
@@ -797,7 +797,7 @@ async function cmdKill(
       if (opts.host) {
         filter["machine"] = opts.host.includes(".")
           ? opts.host
-          : { $regex: `^${escapeRegex(opts.host)}(\\.|\$)` };
+          : { $regex: `^${escapeRegex(opts.host)}(\\.|\$)`, $options: "i" };
       }
       // Only kill sessions that have tmux sessions
       filter["$or"] = [
@@ -1248,8 +1248,8 @@ async function cmdDeleted(
       filter["machine"] = hostname();
     } else if (opts.host) {
       filter["machine"] = opts.host.includes(".")
-        ? opts.host
-        : { $regex: `^${escapeRegex(opts.host)}(\\.|\$)` };
+        ? { $regex: `^${escapeRegex(opts.host)}$`, $options: "i" }
+        : { $regex: `^${escapeRegex(opts.host)}(\\.|\$)`, $options: "i" };
     }
 
     const results = await sessions
