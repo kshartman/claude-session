@@ -644,18 +644,20 @@ async function cmdAttach(
     await configureTmuxBar(config, tmuxSession);
 
     // Forward SSH agent into tmux so git/ssh work inside sessions
-    // Use the fixed symlink path — new shells spawned by Claude will pick it up
+    // Find the most recent live SSH agent socket and refresh the symlink
     const authSockSymlink = join(homedir(), ".ssh", "auth_sock");
-    const authSock = process.env["SSH_AUTH_SOCK"];
-    if (authSock && authSock !== authSockSymlink) {
-      // Refresh the symlink to point to the current live socket
-      try {
+    try {
+      const findResult = Bun.spawnSync(["bash", "-c",
+        `find /tmp/ssh-* -user $(id -u) -type s -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2`
+      ]);
+      const liveSock = findResult.stdout.toString().trim();
+      if (liveSock && existsSync(liveSock)) {
         const { symlinkSync, unlinkSync } = await import("fs");
         try { unlinkSync(authSockSymlink); } catch { /* may not exist */ }
-        symlinkSync(authSock, authSockSymlink);
-      } catch { /* best effort */ }
-    }
-    // Set tmux environment to the fixed symlink path (survives reconnects)
+        symlinkSync(liveSock, authSockSymlink);
+      }
+    } catch { /* best effort */ }
+    // Set tmux environment to the fixed symlink path
     if (existsSync(authSockSymlink)) {
       await tmuxRun("set-environment", "-g", "SSH_AUTH_SOCK", authSockSymlink);
     }
@@ -1315,20 +1317,36 @@ async function cmdPurge(
   config: CsConfig,
   pattern: string,
   confirm: boolean,
-  all: boolean
+  all: boolean,
+  host: string | null,
+  deletedOnly: boolean
 ): Promise<void> {
   const machine = hostname();
   const claudeDir = join(homedir(), ".claude", "projects");
 
   await withDb(config, async (_db, sessions) => {
-    // Find matching sessions (including deleted)
+    // Build host filter
+    const hostFilter: Record<string, unknown> = {};
+    if (host) {
+      hostFilter["machine"] = host.includes(".")
+        ? { $regex: `^${escapeRegex(host)}$`, $options: "i" }
+        : { $regex: `^${escapeRegex(host)}(\\.|\$)`, $options: "i" };
+    }
+
+    // Deleted filter
+    const delFilter: Record<string, unknown> = deletedOnly
+      ? { deleted_at: { $ne: null } }
+      : {};
+
+    // Find matching sessions
     let matches: SessionRecord[];
 
     if (all) {
       // Bulk mode: match pattern against session_id prefix, title, or project name
+      const baseFilter = { ...hostFilter, ...delFilter };
       matches = await sessions
         .find({
-          machine,
+          ...baseFilter,
           $or: [
             { session_id: { $regex: `^${escapeRegex(pattern)}` } },
             { title: { $regex: escapeRegex(pattern), $options: "i" } },
@@ -1377,7 +1395,7 @@ async function cmdPurge(
     }
 
     // Check all are local
-    const nonLocal = matches.filter((m) => m.machine !== machine);
+    const nonLocal = matches.filter((m) => m.machine.toLowerCase() !== machine.toLowerCase());
     if (nonLocal.length > 0 && confirm) {
       console.error(`Cannot purge ${nonLocal.length} session(s) on other hosts. Run cs purge there.`);
       const localOnly = matches.filter((m) => m.machine.toLowerCase() === machine.toLowerCase());
@@ -1586,7 +1604,8 @@ ${bold("Usage:")}
   cs prune [--days N] [--all]     Bulk soft-delete unnamed/untagged sessions
   cs deleted                      List soft-deleted sessions
   cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
-  cs purge <pattern> --all [--yes] Bulk hard delete matching sessions
+  cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
+                                  Bulk hard delete matching sessions
   cs update                       Update cs to latest version
   cs update --all                 Update cs on all known hosts via SSH
   cs version                      Show current version
@@ -1797,12 +1816,15 @@ async function main(): Promise<void> {
     case "purge": {
       const yes = args.includes("--yes");
       const all = args.includes("--all");
-      const pattern = args.filter((a) => !a.startsWith("--"))[1];
+      const deletedOnly = args.includes("--deleted");
+      const hostIdx = args.indexOf("--host");
+      const purgeHost = hostIdx >= 0 ? (args[hostIdx + 1] ?? null) : null;
+      const pattern = args.filter((a) => !a.startsWith("--") && a !== purgeHost)[1];
       if (!pattern) {
-        console.error("Usage: cs purge <pattern> [--yes] [--all]");
+        console.error("Usage: cs purge <pattern> [--yes] [--all] [--host <name>] [--deleted]");
         process.exit(1);
       }
-      await cmdPurge(config, pattern, yes, all);
+      await cmdPurge(config, pattern, yes, all, purgeHost, deletedOnly);
       break;
     }
 
