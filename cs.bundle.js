@@ -29234,25 +29234,43 @@ async function cmdAttach(config, prefix, host) {
     await proc.exited;
   }
 }
-async function killOneSession(session, machine) {
+async function killOneSession(session, machine, sessionsCol) {
   const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
   const isLocal = session.machine === machine;
+  let ok;
   if (isLocal) {
     const result = await tmuxRun("kill-session", "-t", tmuxSession);
-    return result.exitCode === 0;
+    ok = result.exitCode === 0;
   } else {
-    const proc = Bun.spawn([
-      "ssh",
-      session.machine,
-      "-o",
-      "ConnectTimeout=5",
-      "tmux",
-      "kill-session",
-      "-t",
-      tmuxSession
-    ], { stdout: "pipe", stderr: "pipe" });
-    return await proc.exited === 0;
+    const candidates = [session.machine, session.machine.toLowerCase()];
+    const short = session.machine.split(".")[0];
+    if (short !== session.machine)
+      candidates.push(short, short.toLowerCase());
+    const tryHosts = [...new Set(candidates)];
+    ok = false;
+    for (const h of tryHosts) {
+      const proc = Bun.spawn([
+        "ssh",
+        h,
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "BatchMode=yes",
+        "tmux",
+        "kill-session",
+        "-t",
+        tmuxSession
+      ], { stdout: "pipe", stderr: "pipe" });
+      if (await proc.exited === 0) {
+        ok = true;
+        break;
+      }
+    }
   }
+  if (ok && sessionsCol) {
+    await sessionsCol.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { state: "DEAD", tmux_session: null } });
+  }
+  return ok;
 }
 async function cmdKill(config, opts) {
   const machine = hostname();
@@ -29275,7 +29293,7 @@ async function cmdKill(config, opts) {
       for (const s of targets) {
         const name = s.tmux_session ?? tmuxName(s.session_id, s.title, s.project_name);
         const shortHost = s.machine.split(".")[0];
-        const ok = await killOneSession(s, machine);
+        const ok = await killOneSession(s, machine, sessions);
         if (ok) {
           console.log(`  ${red(name)} on ${shortHost}`);
         } else {
@@ -29290,7 +29308,9 @@ async function cmdKill(config, opts) {
     }
     const session = await resolveSession(config, opts.pattern, opts.host);
     const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
-    const ok = await killOneSession(session, machine);
+    const ok = await withDb(config, async (_db, sessions) => {
+      return killOneSession(session, machine, sessions);
+    });
     if (ok) {
       console.log(`Killed ${red(tmuxSession)}`);
     } else {
