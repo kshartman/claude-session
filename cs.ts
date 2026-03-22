@@ -726,21 +726,84 @@ async function cmdAttach(
   }
 }
 
+async function killOneSession(
+  session: SessionRecord,
+  machine: string
+): Promise<boolean> {
+  const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
+  const isLocal = session.machine === machine;
+
+  if (isLocal) {
+    const result = await tmuxRun("kill-session", "-t", tmuxSession);
+    return result.exitCode === 0;
+  } else {
+    const proc = Bun.spawn([
+      "ssh", session.machine, "-o", "ConnectTimeout=5",
+      "tmux", "kill-session", "-t", tmuxSession,
+    ], { stdout: "pipe", stderr: "pipe" });
+    return (await proc.exited) === 0;
+  }
+}
+
 async function cmdKill(
   config: CsConfig,
-  prefix: string
-): Promise<void> {
-  requireTmux();
-  const session = await resolveSession(config, prefix);
-  const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
-
-  const result = await tmuxRun("kill-session", "-t", tmuxSession);
-  if (result.exitCode !== 0) {
-    console.error(`Failed to kill session ${tmuxSession}: ${result.stdout}`);
-    process.exit(1);
+  opts: {
+    pattern: string | null;
+    host: string | null;
+    all: boolean;
   }
+): Promise<void> {
+  const machine = hostname();
 
-  console.log(`Killed session ${red(tmuxSession)}`);
+  if (opts.all) {
+    // Kill all sessions, optionally filtered by host
+    await withDb(config, async (_db, sessions) => {
+      const filter: Record<string, unknown> = { deleted_at: null };
+      if (opts.host) {
+        filter["machine"] = opts.host.includes(".")
+          ? opts.host
+          : { $regex: `^${escapeRegex(opts.host)}(\\.|\$)` };
+      }
+      // Only kill sessions that have tmux sessions
+      filter["$or"] = [
+        { tmux_session: { $ne: null } },
+        { state: { $in: ["WORKING", "WAITING", "IDLE"] } },
+      ];
+
+      const targets = await sessions.find(filter).toArray();
+      if (targets.length === 0) {
+        console.log("No active sessions to kill.");
+        return;
+      }
+
+      console.log(`Killing ${targets.length} session(s)...`);
+      for (const s of targets) {
+        const name = s.tmux_session ?? tmuxName(s.session_id, s.title, s.project_name);
+        const shortHost = s.machine.split(".")[0]!;
+        const ok = await killOneSession(s, machine);
+        if (ok) {
+          console.log(`  ${red(name)} on ${shortHost}`);
+        } else {
+          console.log(`  ${dim(name)} on ${shortHost} ${dim("(not running)")}`);
+        }
+      }
+    });
+  } else {
+    // Kill one session
+    if (!opts.pattern) {
+      console.error("Usage: cs kill <id-or-name> [--host <name>]");
+      process.exit(1);
+    }
+    const session = await resolveSession(config, opts.pattern, opts.host);
+    const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
+    const ok = await killOneSession(session, machine);
+    if (ok) {
+      console.log(`Killed ${red(tmuxSession)}`);
+    } else {
+      console.error(`Session ${tmuxSession} not running`);
+      process.exit(1);
+    }
+  }
 }
 
 async function cmdResume(config: CsConfig): Promise<void> {
@@ -1473,7 +1536,8 @@ ${bold("Usage:")}
   cs launch <project> [prompt]    Launch Claude in detached tmux
   cs adopt <id-prefix> [--attach] Wrap existing session in managed tmux
   cs attach <id-prefix>           Attach to session (local or remote)
-  cs kill <id-prefix>             Kill a tmux session
+  cs kill <id-or-name> [--host <name>]  Kill a tmux session (local or remote)
+  cs kill --all [--host <name>]   Kill all sessions (optionally on one host)
   cs resume                       Interactive session picker (fzf)
   cs last                         Resume most recent session
   cs status                       Live tmux session states
@@ -1621,12 +1685,15 @@ async function main(): Promise<void> {
     }
 
     case "kill": {
-      const prefix = args[1];
-      if (!prefix) {
-        console.error("Usage: cs kill <session_id_prefix>");
+      const all = args.includes("--all");
+      const hostIdx = args.indexOf("--host");
+      const host = hostIdx >= 0 ? (args[hostIdx + 1] ?? null) : null;
+      const pattern = args.filter((a) => !a.startsWith("--") && a !== host)[1] ?? null;
+      if (!all && !pattern) {
+        console.error("Usage: cs kill <id-or-name> [--host <name>] | cs kill --all [--host <name>]");
         process.exit(1);
       }
-      await cmdKill(config, prefix);
+      await cmdKill(config, { pattern, host, all });
       break;
     }
 
