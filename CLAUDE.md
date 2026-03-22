@@ -153,7 +153,9 @@ cs attach <id-or-name> [--host <h>]
                                 # accepts: ID prefix, /rename name, or project name
                                 # ambiguous: prefers local host, or use --host to pick
 
-cs kill <id-or-name>            # terminate a tmux session
+cs kill <id-or-name> [--host <h>]
+                                # terminate a tmux session (local or remote)
+cs kill --all [--host <h>]      # kill all sessions
 
 cs resume                       # fzf-style interactive picker → claude --resume
 

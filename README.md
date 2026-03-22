@@ -107,12 +107,16 @@ You can use a session ID prefix (like git), a `/rename` name (exact match), or a
 
 If you're already inside tmux, cs uses `switch-client` instead of nesting.
 
-### `cs kill <id-prefix>`
+### `cs kill <id-or-name> [--host <name>]`
 
-Terminate a tmux session.
+Terminate a tmux session, local or remote. Updates MongoDB state immediately.
 
 ```bash
-cs kill 952d
+cs kill claude-session            # kill by name
+cs kill 952d                      # kill by ID prefix
+cs kill onepay --host LAKEDEV     # explicit host
+cs kill --all                     # kill all sessions everywhere
+cs kill --all --host dev          # kill all sessions on dev
 ```
 
 ### `cs resume`

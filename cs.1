@@ -94,8 +94,12 @@ prefers the local host's session. Use
 to disambiguate explicitly.
 .RE
 .TP
-.BI "cs kill" " id-or-name"
-Terminate a tmux session.
+.BI "cs kill" " id-or-name [--host name]"
+Terminate a tmux session, local or remote via SSH. Updates the session
+state in MongoDB immediately.
+.TP
+.BI "cs kill --all" " [--host name]"
+Kill all active sessions. Optionally filter to a specific host.
 .TP
 .B cs resume
 Interactive session picker using
