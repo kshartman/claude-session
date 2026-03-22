@@ -158,11 +158,15 @@ prunes regardless of age. Named and tagged sessions are never pruned.
 .BI "cs deleted" " [--local] [--host name]"
 List soft-deleted sessions with deletion timestamps. Defaults to all hosts.
 .TP
-.BI "cs purge" " id-or-name [--yes]"
-Hard delete a session. Removes the MongoDB record, JSONL file, and session
-directory. Without
+.BI "cs purge" " pattern [--yes] [--all] [--host name] [--deleted]"
+Hard delete sessions. Removes MongoDB records, JSONL files, and session
+directories. Without
 .BR --yes ,
-shows what would be deleted. Must be run on the host where the session lives.
+shows what would be deleted. With
+.BR --all ,
+bulk deletes matching sessions (requires typed YES confirmation). With
+.BR --deleted ,
+targets only soft-deleted sessions. Must be run on the host where sessions live.
 This is irreversible.
 .TP
 .BI "cs info" " id-or-name"
@@ -174,10 +178,13 @@ summary, and schema version.
 List all hosts that have synced sessions, with session counts and last
 seen timestamps.
 .TP
-.B cs update
+.B cs update [--force] [--all]
 Check for a new version on the remote server. If a newer version is available,
-downloads the updated bundle and man page. If already up to date, prints the
-current version and exits.
+downloads the updated bundle and man page. With
+.BR --force ,
+re-downloads even when the version matches. With
+.BR --all ,
+updates all known hosts via SSH after updating locally.
 .TP
 .BR "cs version" ", " "--version"
 Print the current version and exit.

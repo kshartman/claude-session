@@ -176,9 +176,13 @@ cs rm --undo <id-or-name>       # restore a soft-deleted session
 cs prune [--days N] [--all]     # bulk soft-delete unnamed/untagged sessions
 cs deleted                      # list soft-deleted sessions
 
-cs purge <id-or-name> [--yes]   # hard delete session + local files (irreversible)
+cs purge <pattern> [--yes]      # hard delete session + local files (irreversible)
+cs purge <pattern> --all [--yes] [--host <h>] [--deleted]
+                                # bulk hard delete matching sessions
 
 cs update                       # check for new version and update in place
+cs update --force               # re-download even if version matches
+cs update --all                 # update all known hosts via SSH
 cs version                      # print current version
 ```
 

@@ -182,13 +182,21 @@ Named and tagged sessions are never pruned.
 
 List soft-deleted sessions. Defaults to all hosts. Use `cs rm --undo <id>` to restore any of them.
 
-### `cs purge <id-or-name> [--yes]`
+### `cs purge <pattern> [--yes] [--all] [--host <name>] [--deleted]`
 
-Hard delete a session — removes the MongoDB record, JSONL file, and session directory. Irreversible. Without `--yes`, shows what would be deleted. Must be run on the host where the session lives.
+Hard delete sessions — removes MongoDB records, JSONL files, and session directories. Irreversible. Without `--yes`, shows what would be deleted. Must be run on the host where sessions live.
 
-### `cs update`
+```bash
+cs purge 952d                      # preview single session purge
+cs purge 952d --yes                # purge one session
+cs purge agent --all --yes         # bulk purge all matching "agent"
+cs purge --all --deleted --yes     # purge all soft-deleted sessions
+cs purge --all --host dev --yes    # purge all sessions on dev
+```
 
-Check for a new version and update in place. Compares the local version against the remote VERSION file and downloads the new bundle if different. Also installs cron sync if not already set up (unless `noCron` is set in config).
+### `cs update [--force] [--all]`
+
+Check for a new version and update in place. `--force` re-downloads even when the version matches. `--all` updates all known hosts via SSH. Also installs cron sync if not set up (unless `noCron` in config).
 
 ### `cs version`
 
