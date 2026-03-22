@@ -29084,7 +29084,7 @@ async function resolveSession(config, prefix, host) {
     }
     if (matches.length > 1) {
       if (!host) {
-        const local = matches.filter((m) => m.machine === hostname());
+        const local = matches.filter((m) => m.machine.toLowerCase() === hostname().toLowerCase());
         if (local.length === 1)
           return local[0];
       }
@@ -29140,7 +29140,7 @@ async function cmdAttach(config, prefix, host) {
   const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
   const machine = hostname();
   const insideTmux = !!process.env["TMUX"];
-  if (session.machine === machine) {
+  if (session.machine.toLowerCase() === machine.toLowerCase()) {
     const check = await tmuxRun("has-session", "-t", tmuxSession);
     if (check.exitCode !== 0) {
       console.log(`Session not running \u2014 starting ${green(tmuxSession)}...`);
@@ -29242,7 +29242,7 @@ async function cmdAttach(config, prefix, host) {
 }
 async function killOneSession(session, machine, sessionsCol) {
   const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
-  const isLocal = session.machine === machine;
+  const isLocal = session.machine.toLowerCase() === machine.toLowerCase();
   let ok;
   if (isLocal) {
     const result = await tmuxRun("kill-session", "-t", tmuxSession);
@@ -29661,7 +29661,7 @@ async function cmdPurge(config, pattern, confirm, all) {
         process.exit(1);
       }
       if (filtered.length > 1) {
-        const local = filtered.filter((m) => m.machine === machine);
+        const local = filtered.filter((m) => m.machine.toLowerCase() === machine.toLowerCase());
         if (local.length === 1) {
           matches = local;
         } else {
@@ -29682,7 +29682,7 @@ async function cmdPurge(config, pattern, confirm, all) {
     const nonLocal = matches.filter((m) => m.machine !== machine);
     if (nonLocal.length > 0 && confirm) {
       console.error(`Cannot purge ${nonLocal.length} session(s) on other hosts. Run cs purge there.`);
-      const localOnly = matches.filter((m) => m.machine === machine);
+      const localOnly = matches.filter((m) => m.machine.toLowerCase() === machine.toLowerCase());
       if (localOnly.length === 0)
         process.exit(1);
       matches = localOnly;
@@ -29692,7 +29692,7 @@ async function cmdPurge(config, pattern, confirm, all) {
     for (const s of matches) {
       const pathHash = `-${s.project_path.slice(1).replace(/[/.]/g, "-")}`;
       const jsonlPath = join2(claudeDir, pathHash, `${s.session_id}.jsonl`);
-      const local = s.machine === machine;
+      const local = s.machine.toLowerCase() === machine.toLowerCase();
       console.log(`  ${s.project_name}  ${s.session_id.slice(0, 14)}  ${s.machine}  ${s.title ?? "(no title)"}  ${local && existsSync2(jsonlPath) ? "files: yes" : dim("files: no")}`);
     }
     if (!confirm) {
@@ -29716,7 +29716,7 @@ Type YES to permanently delete ${matches.length} sessions: `);
       }
     }
     let purged = 0;
-    for (const s of matches.filter((m) => m.machine === machine)) {
+    for (const s of matches.filter((m) => m.machine.toLowerCase() === machine.toLowerCase())) {
       const result = purgeOneSession(s, claudeDir);
       await sessions.deleteOne({ session_id: s.session_id, machine: s.machine });
       for (const f of result.deleted)
@@ -29803,7 +29803,7 @@ async function cmdUpdateAll(config) {
     return sessions.aggregate(pipeline).toArray();
   });
   const localHost = hostname();
-  const remoteHosts = hosts.map((h) => h["_id"]).filter((h) => h !== localHost);
+  const remoteHosts = hosts.map((h) => h["_id"]).filter((h) => h.toLowerCase() !== localHost.toLowerCase());
   if (remoteHosts.length === 0) {
     console.log(`
 No remote hosts to update.`);

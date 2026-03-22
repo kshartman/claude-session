@@ -545,7 +545,7 @@ async function resolveSession(
     if (matches.length > 1) {
       // Prefer local host when ambiguous and no explicit --host
       if (!host) {
-        const local = matches.filter((m) => m.machine === hostname());
+        const local = matches.filter((m) => m.machine.toLowerCase() === hostname().toLowerCase());
         if (local.length === 1) return local[0]!;
       }
 
@@ -620,7 +620,7 @@ async function cmdAttach(
 
   const insideTmux = !!process.env["TMUX"];
 
-  if (session.machine === machine) {
+  if (session.machine.toLowerCase() === machine.toLowerCase()) {
     // Check if tmux session exists, adopt if not
     const check = await tmuxRun("has-session", "-t", tmuxSession);
     if (check.exitCode !== 0) {
@@ -748,7 +748,7 @@ async function killOneSession(
   sessionsCol?: Collection<SessionRecord>
 ): Promise<boolean> {
   const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
-  const isLocal = session.machine === machine;
+  const isLocal = session.machine.toLowerCase() === machine.toLowerCase();
   let ok: boolean;
 
   if (isLocal) {
@@ -1356,7 +1356,7 @@ async function cmdPurge(
       }
       if (filtered.length > 1) {
         // Prefer local
-        const local = filtered.filter((m) => m.machine === machine);
+        const local = filtered.filter((m) => m.machine.toLowerCase() === machine.toLowerCase());
         if (local.length === 1) {
           matches = local;
         } else {
@@ -1380,7 +1380,7 @@ async function cmdPurge(
     const nonLocal = matches.filter((m) => m.machine !== machine);
     if (nonLocal.length > 0 && confirm) {
       console.error(`Cannot purge ${nonLocal.length} session(s) on other hosts. Run cs purge there.`);
-      const localOnly = matches.filter((m) => m.machine === machine);
+      const localOnly = matches.filter((m) => m.machine.toLowerCase() === machine.toLowerCase());
       if (localOnly.length === 0) process.exit(1);
       matches = localOnly;
     }
@@ -1390,7 +1390,7 @@ async function cmdPurge(
     for (const s of matches) {
       const pathHash = `-${s.project_path.slice(1).replace(/[/.]/g, "-")}`;
       const jsonlPath = join(claudeDir, pathHash, `${s.session_id}.jsonl`);
-      const local = s.machine === machine;
+      const local = s.machine.toLowerCase() === machine.toLowerCase();
       console.log(`  ${s.project_name}  ${s.session_id.slice(0, 14)}  ${s.machine}  ${s.title ?? "(no title)"}  ${local && existsSync(jsonlPath) ? "files: yes" : dim("files: no")}`);
     }
 
@@ -1416,7 +1416,7 @@ async function cmdPurge(
 
     // Purge
     let purged = 0;
-    for (const s of matches.filter((m) => m.machine === machine)) {
+    for (const s of matches.filter((m) => m.machine.toLowerCase() === machine.toLowerCase())) {
       const result = purgeOneSession(s, claudeDir);
       await sessions.deleteOne({ session_id: s.session_id, machine: s.machine });
       for (const f of result.deleted) console.log(`  Deleted ${f}`);
@@ -1522,7 +1522,7 @@ async function cmdUpdateAll(config: CsConfig): Promise<void> {
   const localHost = hostname();
   const remoteHosts = hosts
     .map((h) => h["_id"] as string)
-    .filter((h) => h !== localHost);
+    .filter((h) => h.toLowerCase() !== localHost.toLowerCase());
 
   if (remoteHosts.length === 0) {
     console.log("\nNo remote hosts to update.");
