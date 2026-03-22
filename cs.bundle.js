@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.4.4";
+var VERSION = "1.4.5";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29161,6 +29161,10 @@ async function cmdAttach(config, prefix, host) {
         console.error(`Failed to create tmux session: ${create.stdout}`);
         process.exit(1);
       }
+      const tmuxConf = join2(homedir2(), ".tmux.conf");
+      if (existsSync2(tmuxConf)) {
+        await tmuxRun("source-file", tmuxConf);
+      }
     }
     await configureTmuxBar(config, tmuxSession);
     const tmuxCmd = insideTmux ? ["tmux", "switch-client", "-t", tmuxSession] : ["tmux", "attach-session", "-t", tmuxSession];
@@ -29394,6 +29398,10 @@ async function cmdAdopt(config, prefix, attach) {
   if (result.exitCode !== 0) {
     console.error(`Failed to create tmux session: ${result.stdout}`);
     process.exit(1);
+  }
+  const tmuxConf = join2(homedir2(), ".tmux.conf");
+  if (existsSync2(tmuxConf)) {
+    await tmuxRun("source-file", tmuxConf);
   }
   await withDb(config, async (_db, sessions) => {
     await sessions.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { tmux_session: tmuxSession, state: "IDLE" } });

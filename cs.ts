@@ -646,9 +646,31 @@ async function cmdAttach(
         console.error(`Failed to create tmux session: ${create.stdout}`);
         process.exit(1);
       }
+      // Ensure tmux.conf is loaded (new server starts with defaults)
+      const tmuxConf = join(homedir(), ".tmux.conf");
+      if (existsSync(tmuxConf)) {
+        await tmuxRun("source-file", tmuxConf);
+      }
     }
 
     await configureTmuxBar(config, tmuxSession);
+
+    // Forward SSH agent into tmux so git/ssh work inside sessions
+    // Use the fixed symlink path — new shells spawned by Claude will pick it up
+    const authSockSymlink = join(homedir(), ".ssh", "auth_sock");
+    const authSock = process.env["SSH_AUTH_SOCK"];
+    if (authSock && authSock !== authSockSymlink) {
+      // Refresh the symlink to point to the current live socket
+      try {
+        const { symlinkSync, unlinkSync } = await import("fs");
+        try { unlinkSync(authSockSymlink); } catch { /* may not exist */ }
+        symlinkSync(authSock, authSockSymlink);
+      } catch { /* best effort */ }
+    }
+    // Set tmux environment to the fixed symlink path (survives reconnects)
+    if (existsSync(authSockSymlink)) {
+      await tmuxRun("set-environment", "-g", "SSH_AUTH_SOCK", authSockSymlink);
+    }
 
     const tmuxCmd = insideTmux
       ? ["tmux", "switch-client", "-t", tmuxSession]
@@ -985,6 +1007,12 @@ async function cmdAdopt(
   if (result.exitCode !== 0) {
     console.error(`Failed to create tmux session: ${result.stdout}`);
     process.exit(1);
+  }
+
+  // Ensure tmux.conf is loaded (new server starts with defaults)
+  const tmuxConf = join(homedir(), ".tmux.conf");
+  if (existsSync(tmuxConf)) {
+    await tmuxRun("source-file", tmuxConf);
   }
 
   // Update MongoDB with tmux session name
