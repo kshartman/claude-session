@@ -660,6 +660,14 @@ async function cmdAttach(
       await tmuxRun("set-environment", "-g", "SSH_AUTH_SOCK", authSockSymlink);
     }
 
+    // Update MongoDB with tmux session name and state
+    await withDb(config, async (_db, sessions) => {
+      await sessions.updateOne(
+        { session_id: session.session_id, machine: session.machine },
+        { $set: { tmux_session: tmuxSession, state: "IDLE" as SessionState } }
+      );
+    });
+
     const tmuxCmd = insideTmux
       ? ["tmux", "switch-client", "-t", tmuxSession]
       : ["tmux", "attach-session", "-t", tmuxSession];
@@ -712,6 +720,14 @@ async function cmdAttach(
       stderr: "pipe",
     });
     await ensure.exited;
+
+    // Update MongoDB with tmux session name and state
+    await withDb(config, async (_db, sessions) => {
+      await sessions.updateOne(
+        { session_id: session.session_id, machine: session.machine },
+        { $set: { tmux_session: tmuxSession, state: "IDLE" as SessionState } }
+      );
+    });
 
     // Step 2: attach with a clean TTY
     const proc = Bun.spawn([

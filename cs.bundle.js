@@ -29169,6 +29169,9 @@ async function cmdAttach(config, prefix, host) {
     if (existsSync2(authSockSymlink)) {
       await tmuxRun("set-environment", "-g", "SSH_AUTH_SOCK", authSockSymlink);
     }
+    await withDb(config, async (_db, sessions) => {
+      await sessions.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { tmux_session: tmuxSession, state: "IDLE" } });
+    });
     const tmuxCmd = insideTmux ? ["tmux", "switch-client", "-t", tmuxSession] : ["tmux", "attach-session", "-t", tmuxSession];
     const proc = Bun.spawn(tmuxCmd, {
       stdin: "inherit",
@@ -29218,6 +29221,9 @@ async function cmdAttach(config, prefix, host) {
       stderr: "pipe"
     });
     await ensure.exited;
+    await withDb(config, async (_db, sessions) => {
+      await sessions.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { tmux_session: tmuxSession, state: "IDLE" } });
+    });
     const proc = Bun.spawn([
       "ssh",
       session.machine,
