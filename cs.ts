@@ -1457,7 +1457,7 @@ function ensureCron(): void {
   }
 }
 
-async function cmdUpdate(): Promise<void> {
+async function cmdUpdate(force = false): Promise<void> {
   // Fetch remote version
   let remoteVersion: string;
   try {
@@ -1469,13 +1469,15 @@ async function cmdUpdate(): Promise<void> {
     process.exit(1);
   }
 
-  if (remoteVersion === VERSION) {
+  if (remoteVersion === VERSION && !force) {
     console.log(`cs v${VERSION} is up to date.`);
     ensureCron();
     return;
   }
 
-  console.log(`Updating cs v${VERSION} → v${remoteVersion}...`);
+  console.log(force && remoteVersion === VERSION
+    ? `Force updating cs v${VERSION}...`
+    : `Updating cs v${VERSION} → v${remoteVersion}...`);
 
   // Download new bundle
   const binPath = `${homedir()}/.local/bin/cs`;
@@ -1639,7 +1641,7 @@ async function main(): Promise<void> {
       }
       await cmdUpdateAll(config);
     } else {
-      await cmdUpdate();
+      await cmdUpdate(args.includes("--force"));
     }
     return;
   }

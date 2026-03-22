@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.4.10";
+var VERSION = "1.4.11";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29741,7 +29741,7 @@ printf '%s\\n%s\\n' "$existing" '${cronLine}' | crontab -`;
     }
   } catch {}
 }
-async function cmdUpdate() {
+async function cmdUpdate(force = false) {
   let remoteVersion;
   try {
     const resp = await fetch(`${BASE_URL}/VERSION`);
@@ -29752,12 +29752,12 @@ async function cmdUpdate() {
     console.error(`Failed to check for updates: ${err}`);
     process.exit(1);
   }
-  if (remoteVersion === VERSION) {
+  if (remoteVersion === VERSION && !force) {
     console.log(`cs v${VERSION} is up to date.`);
     ensureCron();
     return;
   }
-  console.log(`Updating cs v${VERSION} \u2192 v${remoteVersion}...`);
+  console.log(force && remoteVersion === VERSION ? `Force updating cs v${VERSION}...` : `Updating cs v${VERSION} \u2192 v${remoteVersion}...`);
   const binPath = `${homedir2()}/.local/bin/cs`;
   try {
     const resp = await fetch(`${BASE_URL}/cs.bundle.js`);
@@ -29900,7 +29900,7 @@ async function main() {
       }
       await cmdUpdateAll(config2);
     } else {
-      await cmdUpdate();
+      await cmdUpdate(args.includes("--force"));
     }
     return;
   }
