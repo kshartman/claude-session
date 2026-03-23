@@ -715,6 +715,7 @@ async function cmdAttach(
     // Step 2: attach with a clean TTY, forwarding SSH agent into tmux
     const proc = Bun.spawn([
       "ssh", session.machine, "-t",
+      `bash`, `-lc`,
       `tmux set-environment -t '${tmuxSession}' SSH_AUTH_SOCK \$SSH_AUTH_SOCK 2>/dev/null; ` +
       `[ -n "\$SSH_AUTH_SOCK" ] && ln -sf \$SSH_AUTH_SOCK ~/.ssh/auth_sock 2>/dev/null; ` +
       `exec tmux attach-session -t '${tmuxSession}'`,
@@ -1408,7 +1409,7 @@ async function cmdPurge(
       process.stdout.write(`\nType YES to permanently delete ${matches.length} sessions: `);
       const buf = Buffer.alloc(10);
       const n = require("fs").readSync(0, buf, 0, 10);
-      const answer = buf.slice(0, n).toString().trim();
+      const answer = buf.subarray(0, n).toString().trim();
       if (answer !== "YES") {
         console.log("Aborted.");
         return;
@@ -1438,7 +1439,51 @@ function ensureCron(): void {
       noCron = cfg.noCron === true;
     } catch { /* config not available */ }
 
-    if (!noCron) {
+    if (noCron) return;
+
+    const isMac = process.platform === "darwin";
+
+    if (isMac) {
+      // macOS: use launchctl / LaunchAgents
+      const csUser = process.env["USER"] ?? "user";
+      const label = `com.${csUser}.cs-sync`;
+      const plistPath = join(homedir(), "Library", "LaunchAgents", `${label}.plist`);
+      if (existsSync(plistPath)) return;
+
+      const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:$PATH" cs sync --quiet 2>/dev/null</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/cs-sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/cs-sync-err.log</string>
+</dict>
+</plist>`;
+
+      try {
+        const { writeFileSync, mkdirSync } = require("fs") as typeof import("fs");
+        mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
+        writeFileSync(plistPath, plist);
+        Bun.spawnSync(["launchctl", "load", plistPath]);
+        console.log(`Added launchctl: sync every 5 minutes`);
+      } catch {
+        console.log(dim(`Could not create LaunchAgent — add manually`));
+      }
+    } else {
+      // Linux: use crontab
       const cron = Bun.spawnSync(["bash", "-c", "crontab -l 2>/dev/null"]);
       const cronOut = cron.stdout.toString();
       if (!cronOut.includes("cs sync")) {
@@ -1453,7 +1498,7 @@ function ensureCron(): void {
       }
     }
   } catch {
-    // crontab not available — skip
+    // skip
   }
 }
 

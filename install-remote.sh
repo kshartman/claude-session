@@ -92,11 +92,47 @@ else
   echo "  Config exists at $CONFIG_FILE"
 fi
 
-# Set up cron sync if not already present (unless --nocron or noCron in config)
+# Set up periodic sync (unless --nocron or noCron in config)
 NO_CRON=$(grep -o '"noCron":\s*true' "$CONFIG_FILE" 2>/dev/null || true)
 if [ "$OPT_NOCRON" = true ] || [ -n "$NO_CRON" ]; then
-  echo "  Cron sync skipped"
+  echo "  Periodic sync skipped"
+elif [ "$(uname)" = "Darwin" ]; then
+  # macOS: use LaunchAgent
+  LABEL="com.$(whoami).cs-sync"
+  PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+  if [ -f "$PLIST" ]; then
+    echo "  LaunchAgent sync already configured"
+  else
+    mkdir -p "$HOME/Library/LaunchAgents"
+    cat > "$PLIST" << PEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>PATH="\$HOME/.local/bin:\$HOME/.bun/bin:/opt/homebrew/bin:\$PATH" cs sync --quiet 2>/dev/null</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/cs-sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/cs-sync-err.log</string>
+</dict>
+</plist>
+PEOF
+    launchctl load "$PLIST" 2>/dev/null
+    echo "  Added LaunchAgent: sync every 5 minutes"
+  fi
 else
+  # Linux: use crontab
   CRON_CMD="PATH=\"\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH\" cs sync --quiet 2>/dev/null"
   if crontab -l 2>/dev/null | grep -q "cs sync"; then
     echo "  Cron sync already configured"

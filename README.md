@@ -41,11 +41,14 @@ cs          # see the dashboard
 - [Bun](https://bun.sh) runtime (auto-installed if missing)
 - [tmux](https://github.com/tmux/tmux) for persistent sessions
 - [fzf](https://github.com/junegunn/fzf) for interactive picker (optional, only needed for `cs resume`)
+- [Claude Code](https://claude.ai/code) CLI (`claude`)
 - MongoDB 5+ with TLS
+
+**PATH requirement:** `bun`, `tmux`, and `claude` must be on PATH for **non-interactive** login shells (e.g., `ssh host 'which tmux'` must work). Remote attach and cron sync run without a terminal. If your PATH is set inside an interactive guard in `.bashrc`, move it to `.bash_profile` before the `.bashrc` source. This is especially important on macOS where Homebrew paths (`/opt/homebrew/bin`) may not be set for non-interactive shells.
 
 ### Auto-sync
 
-The installer sets up a user cron job that syncs every 5 minutes. No `.bashrc` changes needed — your shell startup stays instant.
+The installer sets up periodic sync every 5 minutes — crontab on Linux, LaunchAgent on macOS. No `.bashrc` changes needed — your shell startup stays instant.
 
 ## Commands
 
