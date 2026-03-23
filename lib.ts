@@ -1,7 +1,7 @@
 // --- types ---
 
 // VERSION is set here and in the VERSION file — keep in sync when releasing
-export const VERSION = "1.4.13";
+export const VERSION = "1.4.14";
 export const SCHEMA_VERSION = 1;
 
 export type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";
@@ -29,6 +29,7 @@ export interface CsConfig {
   showDetachHint?: boolean;
   listFQDN?: boolean;
   noCron?: boolean;
+  remotePath?: string;
 }
 
 // --- config ---
@@ -78,6 +79,7 @@ export function loadConfig(): CsConfig {
     showDetachHint: parsed["showDetachHint"] === true,
     listFQDN: parsed["listFQDN"] !== false,
     noCron: parsed["noCron"] === true,
+    remotePath: typeof parsed["remotePath"] === "string" ? parsed["remotePath"] : "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin",
   };
 }
 

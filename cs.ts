@@ -669,7 +669,7 @@ async function cmdAttach(
     const script = [
       `#!/bin/bash`,
       `source ~/.bash_profile 2>/dev/null || source ~/.bashrc 2>/dev/null`,
-      `export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"`,
+      `export PATH="${config.remotePath}:$PATH"`,
       `if ! tmux has-session -t '${tmuxSession}' 2>/dev/null; then`,
       `  cd '${session.project_path}' 2>/dev/null`,
       `  tmux new-session -d -s '${tmuxSession}' 'bash -lc "claude --resume ${session.session_id}"'`,
@@ -715,6 +715,7 @@ async function cmdAttach(
     // Step 2: attach with a clean TTY, forwarding SSH agent into tmux
     const proc = Bun.spawn([
       "ssh", session.machine, "-t",
+      `export PATH="${config.remotePath}:\$PATH"; ` +
       `tmux set-environment -t '${tmuxSession}' SSH_AUTH_SOCK \$SSH_AUTH_SOCK 2>/dev/null; ` +
       `[ -n "\$SSH_AUTH_SOCK" ] && ln -sf \$SSH_AUTH_SOCK ~/.ssh/auth_sock 2>/dev/null; ` +
       `exec tmux attach-session -t '${tmuxSession}'`,
