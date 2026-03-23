@@ -672,7 +672,7 @@ async function cmdAttach(
       `export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"`,
       `if ! tmux has-session -t '${tmuxSession}' 2>/dev/null; then`,
       `  cd '${session.project_path}' 2>/dev/null`,
-      `  tmux new-session -d -s '${tmuxSession}' claude --resume '${session.session_id}'`,
+      `  tmux new-session -d -s '${tmuxSession}' 'bash -lc "claude --resume ${session.session_id}"'`,
       `  [ -f ~/.tmux.conf ] && tmux source-file ~/.tmux.conf 2>/dev/null`,
       `fi`,
       // Configure bar using remote tmux prefix (not local)
