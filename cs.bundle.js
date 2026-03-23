@@ -29214,8 +29214,6 @@ async function cmdAttach(config, prefix, host) {
       "ssh",
       session.machine,
       "-t",
-      `bash`,
-      `-lc`,
       `tmux set-environment -t '${tmuxSession}' SSH_AUTH_SOCK $SSH_AUTH_SOCK 2>/dev/null; ` + `[ -n "$SSH_AUTH_SOCK" ] && ln -sf $SSH_AUTH_SOCK ~/.ssh/auth_sock 2>/dev/null; ` + `exec tmux attach-session -t '${tmuxSession}'`
     ], {
       stdin: "inherit",

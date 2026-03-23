@@ -715,7 +715,6 @@ async function cmdAttach(
     // Step 2: attach with a clean TTY, forwarding SSH agent into tmux
     const proc = Bun.spawn([
       "ssh", session.machine, "-t",
-      `bash`, `-lc`,
       `tmux set-environment -t '${tmuxSession}' SSH_AUTH_SOCK \$SSH_AUTH_SOCK 2>/dev/null; ` +
       `[ -n "\$SSH_AUTH_SOCK" ] && ln -sf \$SSH_AUTH_SOCK ~/.ssh/auth_sock 2>/dev/null; ` +
       `exec tmux attach-session -t '${tmuxSession}'`,
