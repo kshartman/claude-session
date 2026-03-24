@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-liner install: curl -sSL https://git.bogometer.com/shartman/claude-session/-/raw/main/install-remote.sh | bash -s -- [--nocron] [--noconfig]
+# One-liner install: curl -sSL https://raw.githubusercontent.com/kshartman/claude-session/main/install-remote.sh | bash -s -- [--nocron] [--noconfig]
 set -euo pipefail
 
 OPT_NOCRON=false
@@ -14,7 +14,7 @@ done
 BIN_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/cs"
 CONFIG_FILE="$CONFIG_DIR/config.json"
-CS_REPO_URL="${CS_REPO_URL:-https://git.bogometer.com/shartman/claude-session/-/raw/main}"
+CS_REPO_URL="${CS_REPO_URL:-https://raw.githubusercontent.com/kshartman/claude-session/main}"
 BUNDLE_URL="$CS_REPO_URL/cs.bundle.js"
 MANPAGE_URL="$CS_REPO_URL/cs.1"
 MAN_DIR="$HOME/.local/share/man/man1"

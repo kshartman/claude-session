@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.4.15";
+var VERSION = "1.4.16";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -28498,7 +28498,8 @@ function loadConfig() {
     showDetachHint: parsed["showDetachHint"] === true,
     listFQDN: parsed["listFQDN"] !== false,
     noCron: parsed["noCron"] === true,
-    remotePath: typeof parsed["remotePath"] === "string" ? parsed["remotePath"] : "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin"
+    remotePath: typeof parsed["remotePath"] === "string" ? parsed["remotePath"] : "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin",
+    repoUrl: typeof parsed["repoUrl"] === "string" ? parsed["repoUrl"] : undefined
   };
 }
 
@@ -29734,7 +29735,17 @@ Type YES to permanently delete ${matches.length} sessions: `);
 Purged ${red(String(purged))} session(s).`);
   });
 }
-var BASE_URL = process.env["CS_REPO_URL"] ?? "https://git.bogometer.com/shartman/claude-session/-/raw/main";
+var DEFAULT_REPO_URL = "https://raw.githubusercontent.com/kshartman/claude-session/main";
+function getBaseUrl() {
+  if (process.env["CS_REPO_URL"])
+    return process.env["CS_REPO_URL"];
+  try {
+    const cfg = loadConfig();
+    if (cfg.repoUrl)
+      return cfg.repoUrl;
+  } catch {}
+  return DEFAULT_REPO_URL;
+}
 function ensureCron() {
   try {
     let noCron = false;
@@ -29802,7 +29813,7 @@ printf '%s\\n%s\\n' "$existing" '${cronLine}' | crontab -`;
 async function cmdUpdate(force = false) {
   let remoteVersion;
   try {
-    const resp = await fetch(`${BASE_URL}/VERSION`);
+    const resp = await fetch(`${getBaseUrl()}/VERSION`);
     if (!resp.ok)
       throw new Error(`HTTP ${resp.status}`);
     remoteVersion = (await resp.text()).trim();
@@ -29818,7 +29829,7 @@ async function cmdUpdate(force = false) {
   console.log(force && remoteVersion === VERSION ? `Force updating cs v${VERSION}...` : `Updating cs v${VERSION} \u2192 v${remoteVersion}...`);
   const binPath = `${homedir2()}/.local/bin/cs`;
   try {
-    const resp = await fetch(`${BASE_URL}/cs.bundle.js`);
+    const resp = await fetch(`${getBaseUrl()}/cs.bundle.js`);
     if (!resp.ok)
       throw new Error(`HTTP ${resp.status}`);
     const content = await resp.text();
@@ -29831,7 +29842,7 @@ async function cmdUpdate(force = false) {
   }
   const manPath = `${homedir2()}/.local/share/man/man1/cs.1`;
   try {
-    const resp = await fetch(`${BASE_URL}/cs.1`);
+    const resp = await fetch(`${getBaseUrl()}/cs.1`);
     if (resp.ok) {
       const { mkdirSync } = await import("fs");
       mkdirSync(`${homedir2()}/.local/share/man/man1`, { recursive: true });
@@ -29926,7 +29937,7 @@ ${bold("List options:")}
   --limit <n>                     Max results (default: 20)
 
 ${bold("Install:")}
-  curl -sSL ${BASE_URL.replace("/-/raw/main", "/-/raw/main/install-remote.sh")} | bash
+  curl -sSL ${getBaseUrl()}/install-remote.sh | bash
   curl ... | bash -s -- --nocron --noconfig   (skip cron/config)
 
 ${bold("Environment:")}

@@ -1444,7 +1444,17 @@ async function cmdPurge(
   });
 }
 
-const BASE_URL = process.env["CS_REPO_URL"] ?? "https://git.bogometer.com/shartman/claude-session/-/raw/main";
+const DEFAULT_REPO_URL = "https://raw.githubusercontent.com/kshartman/claude-session/main";
+
+function getBaseUrl(): string {
+  // Priority: env var > config > default (GitHub)
+  if (process.env["CS_REPO_URL"]) return process.env["CS_REPO_URL"];
+  try {
+    const cfg = loadConfig();
+    if (cfg.repoUrl) return cfg.repoUrl;
+  } catch { /* config not available */ }
+  return DEFAULT_REPO_URL;
+}
 
 function ensureCron(): void {
   try {
@@ -1521,7 +1531,7 @@ async function cmdUpdate(force = false): Promise<void> {
   // Fetch remote version
   let remoteVersion: string;
   try {
-    const resp = await fetch(`${BASE_URL}/VERSION`);
+    const resp = await fetch(`${getBaseUrl()}/VERSION`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     remoteVersion = (await resp.text()).trim();
   } catch (err) {
@@ -1542,7 +1552,7 @@ async function cmdUpdate(force = false): Promise<void> {
   // Download new bundle
   const binPath = `${homedir()}/.local/bin/cs`;
   try {
-    const resp = await fetch(`${BASE_URL}/cs.bundle.js`);
+    const resp = await fetch(`${getBaseUrl()}/cs.bundle.js`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const content = await resp.text();
     await Bun.write(binPath, content);
@@ -1556,7 +1566,7 @@ async function cmdUpdate(force = false): Promise<void> {
   // Update man page
   const manPath = `${homedir()}/.local/share/man/man1/cs.1`;
   try {
-    const resp = await fetch(`${BASE_URL}/cs.1`);
+    const resp = await fetch(`${getBaseUrl()}/cs.1`);
     if (resp.ok) {
       const { mkdirSync } = await import("fs");
       mkdirSync(`${homedir()}/.local/share/man/man1`, { recursive: true });
@@ -1662,7 +1672,7 @@ ${bold("List options:")}
   --limit <n>                     Max results (default: 20)
 
 ${bold("Install:")}
-  curl -sSL ${BASE_URL.replace("/-/raw/main", "/-/raw/main/install-remote.sh")} | bash
+  curl -sSL ${getBaseUrl()}/install-remote.sh | bash
   curl ... | bash -s -- --nocron --noconfig   (skip cron/config)
 
 ${bold("Environment:")}

@@ -1,7 +1,7 @@
 // --- types ---
 
 // VERSION is set here and in the VERSION file — keep in sync when releasing
-export const VERSION = "1.4.15";
+export const VERSION = "1.4.16";
 export const SCHEMA_VERSION = 1;
 
 export type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";
@@ -30,6 +30,7 @@ export interface CsConfig {
   listFQDN?: boolean;
   noCron?: boolean;
   remotePath?: string;
+  repoUrl?: string;
 }
 
 // --- config ---
@@ -80,6 +81,7 @@ export function loadConfig(): CsConfig {
     listFQDN: parsed["listFQDN"] !== false,
     noCron: parsed["noCron"] === true,
     remotePath: typeof parsed["remotePath"] === "string" ? parsed["remotePath"] : "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin",
+    repoUrl: typeof parsed["repoUrl"] === "string" ? parsed["repoUrl"] : undefined,
   };
 }
 

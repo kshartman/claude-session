@@ -249,7 +249,7 @@ try-catch with graceful degradation.
 
 Downloads `cs.bundle.js` (single bundled JS file) to `~/.local/bin/cs`:
 ```
-curl -sSL https://git.bogometer.com/shartman/claude-session/-/raw/main/install-remote.sh | bash
+curl -sSL https://raw.githubusercontent.com/kshartman/claude-session/main/install-remote.sh | bash
 ```
 
 ### From source (install.sh)

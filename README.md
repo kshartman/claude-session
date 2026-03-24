@@ -9,7 +9,7 @@ Manage Claude Code sessions across multiple Linux hosts. Launch persistent sessi
 On any machine with Bun and tmux:
 
 ```bash
-curl -sSL https://git.bogometer.com/shartman/claude-session/-/raw/main/install-remote.sh | bash
+curl -sSL https://raw.githubusercontent.com/kshartman/claude-session/main/install-remote.sh | bash
 ```
 
 Installs Bun if missing (without modifying `.bashrc`), downloads the bundled JS to `~/.local/bin/cs`, sets up config and cron sync.
