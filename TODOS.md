@@ -59,7 +59,7 @@ accessible to everyone.
 |-------|-------|---------------|----------|
 | SQLite | Zero (file) | No (single machine) | Solo users, getting started |
 | DynamoDB | AWS account | Yes (serverless) | Cloud-native teams |
-| MongoDB | Self-hosted | Yes | Self-hosters, current users |
+| MongoDB | Self-hosted or Atlas free tier | Yes | Multi-machine users |
 
 Config selects the backend:
 ```json
