@@ -193,6 +193,26 @@ cs version                      # print current version
 - Stale sessions (>24h): dimmed
 - Respect `NO_COLOR` environment variable
 
+## Undocumented Claude Code Dependencies
+
+cs relies on undocumented internals of Claude Code that could change without
+notice. All parsing is defensive (try-catch, skip malformed) so breakage
+degrades gracefully rather than crashing.
+
+| What we use | Where | Risk if changed |
+|-------------|-------|-----------------|
+| `~/.claude/projects/<path-hash>/<id>.jsonl` file layout | sync | Sync finds nothing |
+| Path hash: `/` → `-` in directory names | sync, path decode | Projects not found |
+| `type: "user"` / `type: "assistant"` in JSONL | title, message count | No titles, count=0 |
+| `message.content` (string or array) | title extraction | No titles |
+| `agentName` field from `/rename` | session naming | Falls back to first message |
+| `timestamp` ISO string per line | started_at | Falls back to file ctime |
+| `agent-*` session IDs for subagents | cleanup | Agents mixed with real sessions |
+| `<id>/session-memory/summary.md` | summary extraction | No summaries |
+
+If Claude Code publishes a stable API for session metadata, cs should migrate
+to it. Until then, monitor after Claude Code updates.
+
 ## Code Structure
 
 Two TypeScript files:
