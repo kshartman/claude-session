@@ -28473,7 +28473,7 @@ function loadConfig() {
 ` + `  mkdir -p ~/.config/cs
 ` + `  cat > ~/.config/cs/config.json << 'EOF'
 ` + `  {
-` + `    "mongoUri": "mongodb://claude:<password>@mdb.bogometer.com:27017/claude?authMechanism=SCRAM-SHA-256&tls=true"
+` + `    "mongoUri": "mongodb://claude:<password>@your-mongo-host:27017/claude?authMechanism=SCRAM-SHA-256&tls=true"
 ` + `  }
 ` + `  EOF
 ` + `  chmod 600 ~/.config/cs/config.json`);

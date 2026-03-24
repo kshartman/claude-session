@@ -17,8 +17,8 @@ import {
 
 describe("redactUri", () => {
   test("redacts password from MongoDB URI", () => {
-    const uri = "mongodb://claude:s3cret@mdb.bogometer.com:27017/claude";
-    expect(redactUri(uri)).toBe("mongodb://claude:***@mdb.bogometer.com:27017/claude");
+    const uri = "mongodb://claude:s3cret@your-mongo-host:27017/claude";
+    expect(redactUri(uri)).toBe("mongodb://claude:***@your-mongo-host:27017/claude");
   });
 
   test("handles URI without credentials", () => {

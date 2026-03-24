@@ -49,7 +49,7 @@ export function loadConfig(): CsConfig {
         `  mkdir -p ~/.config/cs\n` +
         `  cat > ~/.config/cs/config.json << 'EOF'\n` +
         `  {\n` +
-        `    "mongoUri": "mongodb://claude:<password>@mdb.bogometer.com:27017/claude?authMechanism=SCRAM-SHA-256&tls=true"\n` +
+        `    "mongoUri": "mongodb://claude:<password>@your-mongo-host:27017/claude?authMechanism=SCRAM-SHA-256&tls=true"\n` +
         `  }\n` +
         `  EOF\n` +
         `  chmod 600 ~/.config/cs/config.json`
@@ -199,7 +199,7 @@ export function relativeTime(date: Date): string {
 // --- path decoding ---
 
 export function decodePathHash(hash: string): string {
-  // e.g. "-home-bogometer-com-shartman-projects-cs" → "/home/bogometer.com/shartman/projects/cs"
+  // e.g. "-home-user-projects-myapp" → "/home/user/projects/myapp"
   // The hash replaces "/" with "-" and "." with "-"
   // We need to reconstruct — replace leading "-" with "/", then remaining "-" with "/"
   // But this is lossy (hyphens in actual dir names). So we validate against filesystem.
@@ -211,7 +211,7 @@ export function findValidProjectPath(hash: string): string | null {
   const naive = decodePathHash(hash);
   if (existsSync(naive)) return naive;
 
-  // Try common patterns where "-" might be "." (e.g., bogometer.com → bogometer-com)
+  // Try common patterns where "-" might be "." (e.g., example.com → bogometer-com)
   // Walk segments and try "." replacements
   const segments = hash.slice(1).split("-"); // remove leading "-"
   return tryReconstruct(segments, 0, "");
@@ -233,7 +233,7 @@ function tryReconstruct(
   const result1 = tryReconstruct(segments, idx + 1, asSegment);
   if (result1) return result1;
 
-  // Try joining with previous segment via "." (e.g., bogometer.com)
+  // Try joining with previous segment via "." (e.g., example.com)
   if (current) {
     const asDot = `${current}.${seg}`;
     const result2 = tryReconstruct(segments, idx + 1, asDot);

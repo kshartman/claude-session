@@ -41,7 +41,7 @@ fi
 if [ ! -f "$CONFIG_FILE" ]; then
   cat > "$CONFIG_FILE" << 'EOF'
 {
-  "mongoUri": "mongodb://claude:<password>@mdb.bogometer.com:27017/claude?authMechanism=SCRAM-SHA-256&tls=true"
+  "mongoUri": "mongodb://claude:<password>@your-mongo-host:27017/claude?authMechanism=SCRAM-SHA-256&tls=true"
 }
 EOF
   chmod 600 "$CONFIG_FILE"
