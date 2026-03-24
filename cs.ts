@@ -643,6 +643,21 @@ async function cmdAttach(
 
     await configureTmuxBar(config, tmuxSession);
 
+    // Refresh SSH agent symlink from newest live socket
+    try {
+      const findResult = Bun.spawnSync(["bash", "-c",
+        `find /tmp/ssh-* -user $(id -u) -type s -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2`
+      ]);
+      const liveSock = findResult.stdout.toString().trim();
+      const authSockSymlink = join(homedir(), ".ssh", "auth_sock");
+      if (liveSock && existsSync(liveSock)) {
+        const { symlinkSync, unlinkSync } = await import("fs");
+        try { unlinkSync(authSockSymlink); } catch { /* may not exist */ }
+        symlinkSync(liveSock, authSockSymlink);
+        await tmuxRun("set-environment", "-t", tmuxSession, "SSH_AUTH_SOCK", authSockSymlink);
+      }
+    } catch { /* best effort */ }
+
     // Update MongoDB with tmux session name and state
     await withDb(config, async (_db, sessions) => {
       await sessions.updateOne(
