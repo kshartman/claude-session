@@ -260,6 +260,13 @@ SSH hostname to copy config from during install (default:
 .I ~/.config/cs/config.json
 MongoDB connection configuration.
 .TP
+.I ~/.ssh/auth_sock
+Fixed symlink to the current SSH agent socket. Refreshed by
+.B cs attach
+on every connection (local and remote). See
+.I docs/ssh-agent-setup.md
+for full setup details.
+.TP
 .I ~/.claude/projects/<path-hash>/<session-id>.jsonl
 Claude Code session files (read-only; cs never modifies these).
 .TP

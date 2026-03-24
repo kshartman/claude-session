@@ -221,7 +221,9 @@ If you use `/rename` in Claude Code (e.g., `/rename auth-refactor`), that name t
 
 ### Remote attach
 
-When you `cs attach` a session that lives on a different machine, cs looks up the machine in MongoDB and runs `ssh <machine> -t tmux attach-session -t cs-<id>`. You need SSH key auth set up between machines.
+When you `cs attach` a session that lives on a different machine, cs SSH's to that host, creates the tmux session if needed, and attaches. SSH agent forwarding is handled automatically — cs refreshes the `~/.ssh/auth_sock` symlink on every attach (local and remote) so git and SSH work inside sessions.
+
+For full setup details, see [docs/ssh-agent-setup.md](docs/ssh-agent-setup.md).
 
 ### Color coding
 
@@ -243,7 +245,8 @@ Config lives at `~/.config/cs/config.json`:
 | `mongoUri` | (required) | MongoDB connection string |
 | `showDetachHint` | `false` | Show detach key combo in the tmux status bar when attached |
 | `listFQDN` | `true` | Show full hostnames; set `false` to show short names (e.g., `dev` instead of `dev.example.com`) |
-| `noCron` | `false` | Disable automatic cron sync setup on install and update
+| `noCron` | `false` | Disable automatic cron sync setup on install and update |
+| `remotePath` | `$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin` | Extra PATH entries for remote SSH commands (tmux, claude)
 
 ## Multi-machine setup
 
