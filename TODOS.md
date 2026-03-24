@@ -45,6 +45,33 @@ than copy-pasting UUIDs.
 **Effort:** S (CC ~15 min)
 **Depends on:** Core cs commands working.
 
+## P2 — Pluggable storage backend (SessionStore abstraction)
+Abstract the MongoDB dependency behind a `SessionStore` interface so cs can
+support multiple storage backends.
+
+**Why:** MongoDB requires self-hosting. Most users want zero-infrastructure
+setup (SQLite) or serverless cloud (DynamoDB). Pluggable storage makes cs
+accessible to everyone.
+**Context:** Define a `SessionStore` interface with `upsert`, `find`, `delete`,
+`aggregate` methods. Three implementations:
+
+| Store | Setup | Multi-machine | Best for |
+|-------|-------|---------------|----------|
+| SQLite | Zero (file) | No (single machine) | Solo users, getting started |
+| DynamoDB | AWS account | Yes (serverless) | Cloud-native teams |
+| MongoDB | Self-hosted | Yes | Self-hosters, current users |
+
+Config selects the backend:
+```json
+{ "store": "sqlite" }
+{ "store": "dynamodb", "awsRegion": "us-east-1", "tableName": "cs-sessions" }
+{ "store": "mongodb", "mongoUri": "..." }
+```
+Default: SQLite (zero config, works out of the box). Current behavior preserved
+when `mongoUri` is present (implicit MongoDB mode for backward compat).
+**Effort:** L human / M CC (~1 hr)
+**Depends on:** Nothing — can be done anytime. SQLite first, DynamoDB second.
+
 ## P3 — Config sync on update
 When `cs update` runs, check if the remote config has new keys that the local
 config doesn't have. Warn or merge new defaults without overwriting existing values.
