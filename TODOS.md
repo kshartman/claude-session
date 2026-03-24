@@ -45,6 +45,28 @@ than copy-pasting UUIDs.
 **Effort:** S (CC ~15 min)
 **Depends on:** Core cs commands working.
 
+## P1 — MCP server + skill for direct session reporting
+Replace JSONL parsing and tmux state detection with Claude self-reporting
+via an MCP server. Claude calls tools to register, heartbeat, and summarize
+— data goes straight to MongoDB with no heuristics.
+
+**Why:** Eliminates all undocumented Claude Code JSONL dependencies. State
+detection becomes authoritative (Claude says "I'm WAITING") instead of
+heuristic (regex on tmux pane content). Real-time instead of 5-minute cron.
+**Context:** Two components:
+1. **MCP server** — runs locally, exposes `session_register`, `session_heartbeat`,
+   `session_summary` tools. Writes to MongoDB directly. Configured in `.mcp.json`
+   or `~/.claude.json` so every Claude session connects to it.
+2. **Global CLAUDE.md instruction** — tells Claude to call the MCP tools on startup,
+   on state change, and on task completion. Goes in `~/.claude/CLAUDE.md`.
+
+What it replaces: `cs sync` JSONL parsing, tmux `capture-pane` state detection,
+title extraction, summary parsing. What stays: tmux management, CLI commands,
+cross-machine visibility. Cron sync becomes a fallback for sessions not using
+the MCP.
+**Effort:** M human / S CC (~45 min)
+**Depends on:** Claude Code MCP support (already available in v2.1.80+).
+
 ## P2 — Pluggable storage backend (SessionStore abstraction)
 Abstract the MongoDB dependency behind a `SessionStore` interface so cs can
 support multiple storage backends.
