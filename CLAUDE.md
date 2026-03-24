@@ -129,7 +129,7 @@ cs                              # local dashboard: merged tmux + DB table for th
 
 cs sync [--quiet]               # harvest ~/.claude/projects/ → upsert to MongoDB
                                 # detect tmux sessions and update state
-                                # --quiet suppresses output (for .bashrc login hook)
+                                # --quiet suppresses output (for cron/launchctl)
 
 cs list [--local] [--host <h>] [--project <name>] [--limit <n>]
                                 # default: all hosts, sorted by updated_at desc
@@ -260,7 +260,7 @@ curl -sSL https://raw.githubusercontent.com/kshartman/claude-session/main/instal
 4. Runs `bun install` for dependencies
 5. Symlinks `cs.ts` to `~/.local/bin/cs`
 6. Creates MongoDB indexes on first run
-7. Prints instructions for adding `cs sync --quiet &` to `.bashrc`
+7. Sets up periodic sync (crontab on Linux, LaunchAgent on macOS)
 
 ### Build bundle
 
@@ -270,10 +270,10 @@ bun run build   # produces cs.bundle.js
 
 ## What NOT to Build
 
-- No daemon / inotify watcher — sync is explicit (login hook is sufficient)
+- No daemon / inotify watcher — sync runs via cron (Linux) or LaunchAgent (macOS) every 5 minutes
 - No web UI
 - No encryption of session content (metadata only, no message bodies stored)
-- No deletion of Claude's local files
+- `cs purge` is the only command that deletes Claude's local files (JSONL + session dirs)
 - No Telegram/Slack notifications — Claude Code has native channel support via MCP
 - No cross-machine `cs launch` (launch is always local)
 
