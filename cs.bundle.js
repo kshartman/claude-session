@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.4.16";
+var VERSION = "1.4.17";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29229,6 +29229,21 @@ async function cmdAttach(config, prefix, host) {
     await withDb(config, async (_db, sessions) => {
       await sessions.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { tmux_session: tmuxSession, state: "IDLE" } });
     });
+    const agentCheck = Bun.spawnSync(["ssh-add", "-l"]);
+    if (agentCheck.exitCode !== 0) {
+      console.log(yellow("SSH agent has no keys \u2014 adding default key..."));
+      const addKey = Bun.spawn(["ssh-add"], {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit"
+      });
+      await addKey.exited;
+      const recheck = Bun.spawnSync(["ssh-add", "-l"]);
+      if (recheck.exitCode !== 0) {
+        console.error(red("No SSH keys available. Cannot connect to remote host."));
+        process.exit(1);
+      }
+    }
     const proc = Bun.spawn([
       "ssh",
       session.machine,

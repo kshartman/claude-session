@@ -727,6 +727,24 @@ async function cmdAttach(
       );
     });
 
+    // Check if local agent has keys before forwarding
+    const agentCheck = Bun.spawnSync(["ssh-add", "-l"]);
+    if (agentCheck.exitCode !== 0) {
+      console.log(yellow("SSH agent has no keys — adding default key..."));
+      const addKey = Bun.spawn(["ssh-add"], {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      await addKey.exited;
+      // Verify
+      const recheck = Bun.spawnSync(["ssh-add", "-l"]);
+      if (recheck.exitCode !== 0) {
+        console.error(red("No SSH keys available. Cannot connect to remote host."));
+        process.exit(1);
+      }
+    }
+
     // Step 2: attach with a clean TTY, forwarding SSH agent into tmux
     const proc = Bun.spawn([
       "ssh", session.machine, "-t",
