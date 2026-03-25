@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.4.17";
+var VERSION = "1.4.18";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29218,6 +29218,8 @@ async function cmdAttach(config, prefix, host) {
     const ensure = Bun.spawn([
       "ssh",
       session.machine,
+      "-o",
+      "ControlPath=none",
       "bash",
       "-s"
     ], {
@@ -29247,6 +29249,8 @@ async function cmdAttach(config, prefix, host) {
     const proc = Bun.spawn([
       "ssh",
       session.machine,
+      "-o",
+      "ControlPath=none",
       "-t",
       `export PATH="${config.remotePath}:$PATH"; tmux set-environment -t '${tmuxSession}' SSH_AUTH_SOCK $SSH_AUTH_SOCK 2>/dev/null; [ -n "$SSH_AUTH_SOCK" ] && ln -sf $SSH_AUTH_SOCK ~/.ssh/auth_sock 2>/dev/null; exec tmux attach-session -t '${tmuxSession}'`
     ], {
@@ -29275,6 +29279,8 @@ async function killOneSession(session, machine, sessionsCol) {
       const proc = Bun.spawn([
         "ssh",
         h,
+        "-o",
+        "ControlPath=none",
         "-o",
         "ConnectTimeout=5",
         "-o",
@@ -29896,6 +29902,8 @@ Updating ${remoteHosts.length} remote host(s)...`);
       const proc = Bun.spawn([
         "ssh",
         tryHost,
+        "-o",
+        "ControlPath=none",
         "-o",
         "ConnectTimeout=5",
         "-o",

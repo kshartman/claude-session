@@ -711,7 +711,7 @@ async function cmdAttach(
     ].filter(Boolean).join("\n");
 
     const ensure = Bun.spawn([
-      "ssh", session.machine, "bash", "-s",
+      "ssh", session.machine, "-o", "ControlPath=none", "bash", "-s",
     ], {
       stdin: new Response(script),
       stdout: "pipe",
@@ -747,7 +747,7 @@ async function cmdAttach(
 
     // Step 2: attach with a clean TTY, forwarding SSH agent into tmux
     const proc = Bun.spawn([
-      "ssh", session.machine, "-t",
+      "ssh", session.machine, "-o", "ControlPath=none", "-t",
       `export PATH="${config.remotePath}:\$PATH"; ` +
       `tmux set-environment -t '${tmuxSession}' SSH_AUTH_SOCK \$SSH_AUTH_SOCK 2>/dev/null; ` +
       `[ -n "\$SSH_AUTH_SOCK" ] && ln -sf \$SSH_AUTH_SOCK ~/.ssh/auth_sock 2>/dev/null; ` +
@@ -782,7 +782,7 @@ async function killOneSession(
     ok = false;
     for (const h of tryHosts) {
       const proc = Bun.spawn([
-        "ssh", h, "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+        "ssh", h, "-o", "ControlPath=none", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
         "tmux", "kill-session", "-t", tmuxSession,
       ], { stdout: "pipe", stderr: "pipe" });
       if ((await proc.exited) === 0) { ok = true; break; }
@@ -1635,7 +1635,7 @@ async function cmdUpdateAll(config: CsConfig): Promise<void> {
     let success = false;
     for (const tryHost of tryHosts) {
       const proc = Bun.spawn([
-        "ssh", tryHost, "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+        "ssh", tryHost, "-o", "ControlPath=none", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
         "PATH=$HOME/.local/bin:$HOME/.bun/bin:$PATH cs update",
       ], { stdout: "pipe", stderr: "pipe" });
       const stdout = await new Response(proc.stdout).text();
