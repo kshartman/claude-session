@@ -46,6 +46,8 @@ cs          # see the dashboard
 
 **PATH requirement:** `bun`, `tmux`, and `claude` must be on PATH for **non-interactive** login shells (e.g., `ssh host 'which tmux'` must work). Remote attach and cron sync run without a terminal. If your PATH is set inside an interactive guard in `.bashrc`, move it to `.bash_profile` before the `.bashrc` source. This is especially important on macOS where Homebrew paths (`/opt/homebrew/bin`) may not be set for non-interactive shells.
 
+**SSH keys:** Each machine needs your SSH private key on disk. cs manages a persistent local agent (`~/.ssh/cs-agent.sock`) — no agent forwarding or dotfile configuration required.
+
 ### Auto-sync
 
 The installer sets up periodic sync every 5 minutes — crontab on Linux, LaunchAgent on macOS. No `.bashrc` changes needed — your shell startup stays instant.
@@ -201,6 +203,10 @@ cs purge --all --host dev --yes    # purge all sessions on dev
 
 Check for a new version and update in place. `--force` re-downloads even when the version matches. `--all` updates all known hosts via SSH. Also installs cron sync if not set up (unless `noCron` in config).
 
+### `cs agent stop [--host <name>] [--all]`
+
+Kill the persistent SSH agent on one or all machines. Useful when you're done for the day and want keys removed from memory.
+
 ### `cs version`
 
 Print the current version.
@@ -221,9 +227,9 @@ If you use `/rename` in Claude Code (e.g., `/rename auth-refactor`), that name t
 
 ### Remote attach
 
-When you `cs attach` a session that lives on a different machine, cs SSH's to that host, creates the tmux session if needed, and attaches. SSH agent forwarding is handled automatically — cs refreshes the `~/.ssh/auth_sock` symlink on every attach (local and remote) so git and SSH work inside sessions.
+When you `cs attach` a session that lives on a different machine, cs SSH's to that host, creates the tmux session if needed, and attaches. cs manages a persistent SSH agent on each machine (`~/.ssh/cs-agent.sock`) — no agent forwarding, no symlinks, no dotfile configuration needed. If keys have expired, cs prompts for your passphrase before attaching.
 
-For full setup details, see [docs/ssh-agent-setup.md](docs/ssh-agent-setup.md).
+Use `cs agent stop` to kill the agent on any machine when you're done.
 
 ### Color coding
 
@@ -246,7 +252,8 @@ Config lives at `~/.config/cs/config.json`:
 | `showDetachHint` | `false` | Show detach key combo in the tmux status bar when attached |
 | `listFQDN` | `true` | Show full hostnames; set `false` to show short names (e.g., `dev` instead of `dev.example.com`) |
 | `noCron` | `false` | Disable automatic cron sync setup on install and update |
-| `remotePath` | `$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin` | Extra PATH entries for remote SSH commands (tmux, claude)
+| `remotePath` | `$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin` | Extra PATH entries for remote SSH commands (tmux, claude) |
+| `agentKeyTimeout` | `28800` (8h) | How long SSH keys stay loaded in the agent (seconds)
 
 ## Multi-machine setup
 

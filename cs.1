@@ -178,6 +178,13 @@ summary, and schema version.
 List all hosts that have synced sessions, with session counts and last
 seen timestamps.
 .TP
+.BI "cs agent stop" " [--host name] [--all]"
+Kill the persistent SSH agent on one or all machines. The agent runs at
+.I ~/.ssh/cs-agent.sock
+and is started automatically by
+.BR "cs attach" .
+Use this to remove loaded keys from memory.
+.TP
 .B cs update [--force] [--all]
 Check for a new version on the remote server. If a newer version is available,
 downloads the updated bundle and man page. With
@@ -260,12 +267,13 @@ SSH hostname to copy config from during install (default:
 .I ~/.config/cs/config.json
 MongoDB connection configuration.
 .TP
-.I ~/.ssh/auth_sock
-Fixed symlink to the current SSH agent socket. Refreshed by
-.B cs attach
-on every connection (local and remote). See
-.I docs/ssh-agent-setup.md
-for full setup details.
+.I ~/.ssh/cs-agent.sock
+Persistent SSH agent socket managed by
+.BR "cs attach" .
+Started automatically, keys expire after
+.I agentKeyTimeout
+seconds (default 8h). Kill with
+.BR "cs agent stop" .
 .TP
 .I ~/.claude/projects/<path-hash>/<session-id>.jsonl
 Claude Code session files (read-only; cs never modifies these).

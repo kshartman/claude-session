@@ -1,150 +1,106 @@
-# SSH Agent Forwarding with cs
+# SSH Agent Management in cs
 
-`cs attach` connects you to sessions across machines via SSH. For git push and other SSH operations to work inside those sessions, your SSH agent must be forwarded and accessible. This document explains how it works and how to set up your dotfiles.
+cs manages a persistent local SSH agent on each machine. No agent forwarding, no symlinks, no dotfile configuration required.
 
-## The problem
+## How it works
 
-When you `cs attach` from machine A to a session on machine B:
+Each machine runs its own SSH agent at a fixed socket path: `~/.ssh/cs-agent.sock`. The agent is started automatically by `cs attach` and persists across tmux detach/reattach, SSH disconnects, and network drops.
 
-1. Your SSH connection from A→B carries your forwarded agent
-2. The agent socket lives at a random path like `/tmp/ssh-xxx/agent.12345`
-3. Claude Code (running inside tmux on B) spawns new shells that need `SSH_AUTH_SOCK` to use the agent
-4. When you detach and reattach later, a NEW SSH connection creates a NEW socket at a different path
-5. The old socket is dead — any shell still pointing to it can't use the agent
+Your SSH private key must be on each machine. When `cs attach` detects the agent has no loaded keys (expired or first use), it prompts for your passphrase. Keys expire after a configurable timeout (default 8 hours).
 
-## The solution: fixed symlink + unconditional export
+## The flow
 
-Two pieces work together:
+### First attach to a remote session
 
-### 1. Symlink creation (in `.bash_profile`, gated on SSH_CONNECTION)
+```
+You (A) ──cs attach──► Machine B
+                         │
+                         ├─ SSH #1 (ensure): starts agent at ~/.ssh/cs-agent.sock
+                         │   └─ Creates tmux session if needed
+                         │
+                         └─ SSH #2 (attach): checks agent for keys
+                             ├─ No keys? Prompts: "Adding SSH key (expires in 8h)..."
+                             ├─ You enter passphrase (once)
+                             ├─ Sets tmux env: SSH_AUTH_SOCK=~/.ssh/cs-agent.sock
+                             └─ Attaches to tmux session
+```
 
-When you SSH into a machine, create a symlink from a fixed path to the live agent socket:
+### Reattach (session exists, keys still valid)
+
+```
+You (A) ──cs attach──► Machine B
+                         │
+                         ├─ SSH #1: agent already running, keys loaded → skip
+                         └─ SSH #2: keys valid → straight to tmux attach
+```
+
+### Reattach (keys expired)
+
+```
+You (A) ──cs attach──► Machine B
+                         │
+                         ├─ SSH #1: agent running but no keys → skip (SSH #2 handles it)
+                         └─ SSH #2: "Adding SSH key (expires in 8h)..."
+                             ├─ You enter passphrase
+                             └─ Attaches to tmux session
+```
+
+### Local attach (same machine)
+
+```
+cs attach claude-session
+  │
+  ├─ Ensures agent at ~/.ssh/cs-agent.sock
+  ├─ No keys? Prompts ssh-add
+  ├─ Sets tmux env SSH_AUTH_SOCK
+  └─ tmux switch-client or attach-session
+```
+
+## Why not agent forwarding?
+
+Agent forwarding is inherently fragile:
+- The socket dies when the SSH connection dies (sleep, network drop, timeout)
+- Symlinks to the socket go stale
+- tmux sessions started before the SSH connection don't inherit the socket
+- ControlMaster mux connections cache stale agent state
+- Non-interactive shells (Claude's Bash tool) may not have `SSH_AUTH_SOCK` set
+
+A persistent local agent has none of these problems. The socket is always at the same path, the agent survives everything, and the only thing that expires is the loaded key.
+
+## Configuration
+
+In `~/.config/cs/config.json`:
+
+```json
+{
+  "agentKeyTimeout": 28800
+}
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `agentKeyTimeout` | `28800` (8h) | Seconds before loaded keys expire. Set to `0` for no expiry (not recommended). |
+
+## Managing agents
 
 ```bash
-# Only create symlink when arriving via SSH (agent is forwarded)
-if [ -n "$SSH_AUTH_SOCK" ] && [ "$SSH_AUTH_SOCK" != "$HOME/.ssh/auth_sock" ]; then
-  ln -sf "$SSH_AUTH_SOCK" "$HOME/.ssh/auth_sock"
-fi
+cs agent stop              # stop agent on this machine
+cs agent stop --host dev   # stop agent on a specific host
+cs agent stop --all        # stop agents on all known hosts
 ```
 
-This runs when you SSH in and when `cs attach` connects remotely (cs refreshes this symlink in its SSH #2 attach step).
+## Requirements
 
-### 2. SSH_AUTH_SOCK export (in `.bash_profile`, unconditional)
-
-Every shell — interactive, non-interactive, login, tool-spawned — must point to the fixed symlink:
-
-```bash
-# MUST be outside any interactive guard
-export SSH_AUTH_SOCK="$HOME/.ssh/auth_sock"
-```
-
-This goes in `.bash_profile` **before** the `.bashrc` source and **outside** any `[[ $- == *i* ]]` guard. It must run for:
-- Interactive login shells (your terminal)
-- Non-interactive shells (Claude Code's Bash tool, cron, scripts)
-- tmux panes (inherit from tmux environment)
-
-### 3. tmux environment (handled by cs)
-
-`cs attach` does this automatically in the SSH #2 attach step:
-
-```bash
-tmux set-environment -t <session> SSH_AUTH_SOCK $SSH_AUTH_SOCK
-ln -sf $SSH_AUTH_SOCK ~/.ssh/auth_sock
-exec tmux attach-session -t <session>
-```
-
-This updates both the tmux session environment (for new panes) and the symlink (for existing shells using the fixed path).
-
-### 4. tmux.conf settings
-
-Your `.tmux.conf` should include:
-
-```
-set-option -g update-environment "SSH_AUTH_SOCK SSH_CONNECTION"
-set-environment -g SSH_AUTH_SOCK ~/.ssh/auth_sock
-```
-
-The first line tells tmux to update those vars when a client attaches. The second sets the global default to the symlink path.
-
-## How it flows
-
-### First attach (session created)
-
-```
-You (A) ──ssh──► Machine B
-                  │
-                  ├─ .bash_profile runs
-                  │   ├─ symlink: ~/.ssh/auth_sock → /tmp/ssh-xxx/agent.123
-                  │   └─ export SSH_AUTH_SOCK=~/.ssh/auth_sock
-                  │
-                  ├─ cs creates tmux session
-                  │   ├─ tmux new-session runs claude --resume
-                  │   └─ tmux sources .tmux.conf (set-environment)
-                  │
-                  └─ cs attaches
-                      ├─ tmux set-environment SSH_AUTH_SOCK /tmp/ssh-xxx/agent.123
-                      ├─ ln -sf /tmp/ssh-xxx/agent.123 ~/.ssh/auth_sock
-                      └─ tmux attach-session
-```
-
-### Reattach (session already exists)
-
-```
-You (A) ──ssh──► Machine B (new SSH, new socket /tmp/ssh-yyy/agent.456)
-                  │
-                  ├─ cs attach runs SSH #2:
-                  │   ├─ tmux set-environment SSH_AUTH_SOCK /tmp/ssh-yyy/agent.456
-                  │   ├─ ln -sf /tmp/ssh-yyy/agent.456 ~/.ssh/auth_sock
-                  │   └─ tmux attach-session
-                  │
-                  └─ Claude's Bash tool spawns shell:
-                      ├─ .bash_profile: export SSH_AUTH_SOCK=~/.ssh/auth_sock
-                      ├─ ~/.ssh/auth_sock → /tmp/ssh-yyy/agent.456 (live!)
-                      └─ git push works ✓
-```
-
-### When it breaks
-
-The agent dies when:
-- Your SSH connection from A→B drops (network, laptop sleep, timeout)
-- The socket at `/tmp/ssh-xxx/agent.123` is cleaned up
-- The symlink still points to the dead socket
-
-It's fixed on next `cs attach` — the SSH #2 step refreshes the symlink. But between disconnect and reattach, existing shells can't use the agent.
-
-## SSH config recommendations
-
-In `~/.ssh/config` on the machine you attach FROM:
-
-```
-Host *
-  ForwardAgent yes
-  ServerAliveInterval 60
-  ServerAliveCountMax 3
-  AddKeysToAgent yes
-```
-
-- `ForwardAgent yes` — forward your agent to remote hosts
-- `ServerAliveInterval 60` — send keepalive every 60 seconds (prevents idle timeout)
-- `ServerAliveCountMax 3` — disconnect after 3 missed keepalives (3 minutes)
-- `AddKeysToAgent yes` — auto-add keys to agent on first use
+- SSH private key deployed to each machine cs manages
+- `ssh-add` available on PATH
+- No dotfile changes needed — no `.bash_profile`, `.tmux.conf`, or `~/.ssh/config` modifications required by cs
 
 ## Timeout behavior
 
-| Scenario | What happens | Agent status |
+| Scenario | Agent status | What happens |
 |----------|-------------|-------------|
-| Normal detach (C-6 d) | SSH closes, socket dies | Dead until reattach |
-| Network drop | SSH dies after ServerAliveCountMax | Dead until reattach |
-| Laptop sleep | SSH dies on wake (usually) | Dead until reattach |
-| `cs attach` from new machine | New SSH, new socket, symlink refreshed | Alive |
-| `cs attach` from same machine (local) | No SSH involved, uses existing tmux | Uses whatever symlink points to |
-
-## Checklist
-
-- [ ] `.bash_profile`: `export SSH_AUTH_SOCK="$HOME/.ssh/auth_sock"` — **outside** interactive guard
-- [ ] `.bash_profile`: symlink creation on SSH login — gated on `SSH_CONNECTION`
-- [ ] `.tmux.conf`: `set-option -g update-environment "SSH_AUTH_SOCK SSH_CONNECTION"`
-- [ ] `.tmux.conf`: `set-environment -g SSH_AUTH_SOCK ~/.ssh/auth_sock`
-- [ ] `~/.ssh/config`: `ForwardAgent yes` on machines you attach from
-- [ ] `~/.ssh/config`: `ServerAliveInterval 60` to prevent idle drops
-- [ ] SSH keys deployed to all machines (or use agent forwarding chain)
+| Normal detach | Agent alive, keys loaded | Instant reattach, no passphrase |
+| Sleep / network drop | Agent alive, keys loaded | Instant reattach, no passphrase |
+| Keys expired (8h default) | Agent alive, no keys | Prompts passphrase on next `cs attach` |
+| `cs agent stop` | Agent stopped | Next `cs attach` starts fresh agent, prompts passphrase |
+| Machine reboot | Agent gone | Next `cs attach` starts agent, prompts passphrase |

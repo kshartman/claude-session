@@ -180,6 +180,8 @@ cs purge <pattern> [--yes]      # hard delete session + local files (irreversibl
 cs purge <pattern> --all [--yes] [--host <h>] [--deleted]
                                 # bulk hard delete matching sessions
 
+cs agent stop [--host <h>] [--all]  # stop SSH agent on host(s)
+
 cs update                       # check for new version and update in place
 cs update --force               # re-download even if version matches
 cs update --all                 # update all known hosts via SSH
