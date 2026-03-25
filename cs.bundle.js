@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.4.19";
+var VERSION = "1.5.0";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -28499,7 +28499,8 @@ function loadConfig() {
     listFQDN: parsed["listFQDN"] !== false,
     noCron: parsed["noCron"] === true,
     remotePath: typeof parsed["remotePath"] === "string" ? parsed["remotePath"] : "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin",
-    repoUrl: typeof parsed["repoUrl"] === "string" ? parsed["repoUrl"] : undefined
+    repoUrl: typeof parsed["repoUrl"] === "string" ? parsed["repoUrl"] : undefined,
+    agentKeyTimeout: typeof parsed["agentKeyTimeout"] === "number" ? parsed["agentKeyTimeout"] : 28800
   };
 }
 
@@ -29102,6 +29103,38 @@ async function resolveSession(config, prefix, host) {
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+async function ensureLocalAgent(config, tmuxSession) {
+  const agentSock = join2(homedir2(), ".ssh", "cs-agent.sock");
+  const keyTimeout = config.agentKeyTimeout ?? 28800;
+  const check = Bun.spawnSync([
+    "bash",
+    "-c",
+    `SSH_AUTH_SOCK="${agentSock}" ssh-add -l >/dev/null 2>&1; echo $?`
+  ]);
+  const exitCode = parseInt(check.stdout.toString().trim());
+  if (exitCode === 2) {
+    Bun.spawnSync([
+      "bash",
+      "-c",
+      `rm -f "${agentSock}" 2>/dev/null; ssh-agent -a "${agentSock}" >/dev/null 2>&1`
+    ]);
+  }
+  if (exitCode !== 0) {
+    console.log(yellow(`Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)...`));
+    const addKey = Bun.spawn([
+      "bash",
+      "-c",
+      `SSH_AUTH_SOCK="${agentSock}" ssh-add -t ${keyTimeout}`
+    ], {
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit"
+    });
+    await addKey.exited;
+  }
+  await tmuxRun("set-environment", "-t", tmuxSession, "SSH_AUTH_SOCK", agentSock);
+  await tmuxRun("set-environment", "-g", "SSH_AUTH_SOCK", agentSock);
+}
 async function configureTmuxBar(config, tmuxSession) {
   await tmuxRun("set-option", "-t", tmuxSession, "window-status-format", "");
   await tmuxRun("set-option", "-t", tmuxSession, "window-status-current-format", "");
@@ -29157,23 +29190,7 @@ async function cmdAttach(config, prefix, host) {
       }
     }
     await configureTmuxBar(config, tmuxSession);
-    try {
-      const findResult = Bun.spawnSync([
-        "bash",
-        "-c",
-        `find /tmp/ssh-* -user $(id -u) -type s -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2`
-      ]);
-      const liveSock = findResult.stdout.toString().trim();
-      const authSockSymlink = join2(homedir2(), ".ssh", "auth_sock");
-      if (liveSock && existsSync2(liveSock)) {
-        const { symlinkSync, unlinkSync } = await import("fs");
-        try {
-          unlinkSync(authSockSymlink);
-        } catch {}
-        symlinkSync(liveSock, authSockSymlink);
-        await tmuxRun("set-environment", "-t", tmuxSession, "SSH_AUTH_SOCK", authSockSymlink);
-      }
-    } catch {}
+    await ensureLocalAgent(config, tmuxSession);
     await withDb(config, async (_db, sessions) => {
       await sessions.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { tmux_session: tmuxSession, state: "IDLE" } });
     });
@@ -29186,15 +29203,26 @@ async function cmdAttach(config, prefix, host) {
     await proc.exited;
   } else {
     console.log(`Connecting to ${machineColor(session.machine)}...`);
-    const script = [
+    const agentSock = "$HOME/.ssh/cs-agent.sock";
+    const keyTimeout = config.agentKeyTimeout ?? 28800;
+    const ensureScript = [
       `#!/bin/bash`,
       `source ~/.bash_profile 2>/dev/null || source ~/.bashrc 2>/dev/null`,
       `export PATH="${config.remotePath}:$PATH"`,
+      `AGENT_SOCK="${agentSock}"`,
+      `export SSH_AUTH_SOCK="$AGENT_SOCK"`,
+      `if ! ssh-add -l >/dev/null 2>&1; then`,
+      `  pkill -f "ssh-agent -a $AGENT_SOCK" 2>/dev/null || true`,
+      `  rm -f "$AGENT_SOCK" 2>/dev/null`,
+      `  eval $(ssh-agent -a "$AGENT_SOCK") >/dev/null 2>&1`,
+      `fi`,
       `if ! tmux has-session -t '${tmuxSession}' 2>/dev/null; then`,
       `  cd '${session.project_path}' 2>/dev/null`,
-      `  tmux new-session -d -s '${tmuxSession}' 'bash -lc "claude --resume ${session.session_id}"'`,
+      `  tmux new-session -d -s '${tmuxSession}' -e SSH_AUTH_SOCK="$AGENT_SOCK" 'bash -lc "claude --resume ${session.session_id}"'`,
       `  [ -f ~/.tmux.conf ] && tmux source-file ~/.tmux.conf 2>/dev/null`,
       `fi`,
+      `tmux set-environment -t '${tmuxSession}' SSH_AUTH_SOCK "$AGENT_SOCK"`,
+      `tmux set-environment -g SSH_AUTH_SOCK "$AGENT_SOCK"`,
       `PREFIX=$(tmux show-options -gv prefix 2>/dev/null || echo C-b)`,
       `case "$PREFIX" in`,
       `  C-b) PFX="C-b" ;; C-a) PFX="C-a" ;; "C-^") PFX="C-6" ;; *) PFX="$PREFIX" ;;`,
@@ -29223,7 +29251,7 @@ async function cmdAttach(config, prefix, host) {
       "bash",
       "-s"
     ], {
-      stdin: new Response(script),
+      stdin: new Response(ensureScript),
       stdout: "pipe",
       stderr: "pipe"
     });
@@ -29231,38 +29259,13 @@ async function cmdAttach(config, prefix, host) {
     await withDb(config, async (_db, sessions) => {
       await sessions.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { tmux_session: tmuxSession, state: "IDLE" } });
     });
-    const agentCheck = Bun.spawnSync(["ssh-add", "-l"]);
-    if (agentCheck.exitCode !== 0) {
-      if (agentCheck.exitCode === 2) {
-        console.log(yellow("No SSH agent \u2014 starting one..."));
-        Bun.spawnSync([
-          "bash",
-          "-lc",
-          `ssh-agent -a ~/.ssh/agent.sock 2>/dev/null || true; echo SSH_AUTH_SOCK=~/.ssh/agent.sock`
-        ]);
-        process.env["SSH_AUTH_SOCK"] = join2(homedir2(), ".ssh", "agent.sock");
-      }
-      console.log(yellow("Adding SSH key..."));
-      const addKey = Bun.spawn(["ssh-add"], {
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-        env: { ...process.env }
-      });
-      await addKey.exited;
-      const recheck = Bun.spawnSync(["ssh-add", "-l"]);
-      if (recheck.exitCode !== 0) {
-        console.error(red("No SSH keys available. Cannot connect to remote host."));
-        process.exit(1);
-      }
-    }
     const proc = Bun.spawn([
       "ssh",
       session.machine,
       "-o",
       "ControlPath=none",
       "-t",
-      `export PATH="${config.remotePath}:$PATH"; tmux set-environment -t '${tmuxSession}' SSH_AUTH_SOCK $SSH_AUTH_SOCK 2>/dev/null; [ -n "$SSH_AUTH_SOCK" ] && ln -sf $SSH_AUTH_SOCK ~/.ssh/auth_sock 2>/dev/null; exec tmux attach-session -t '${tmuxSession}'`
+      `export SSH_AUTH_SOCK="${agentSock}"; ` + `export PATH="${config.remotePath}:$PATH"; ` + `if ! ssh-add -l >/dev/null 2>&1; then ` + `  echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."; ` + `  ssh-add -t ${keyTimeout}; ` + `fi; ` + `exec tmux attach-session -t '${tmuxSession}'`
     ], {
       stdin: "inherit",
       stdout: "inherit",
@@ -29510,7 +29513,7 @@ async function cmdAdopt(config, prefix, attach) {
   const machine = hostname();
   if (session.machine !== machine) {
     console.error(`Session ${shortId(session.session_id)} is on ${session.machine}, not this machine.
-You can only adopt local sessions.`);
+` + `You can only adopt local sessions.`);
     process.exit(1);
   }
   if (session.tmux_session) {
@@ -29538,7 +29541,7 @@ You can only adopt local sessions.`);
     await sessions.updateOne({ session_id: session.session_id, machine: session.machine }, { $set: { tmux_session: tmuxSession, state: "IDLE" } });
   });
   console.log(`Adopted ${bold(session.title ?? shortId(session.session_id))} as ${green(tmuxSession)}
-Claude is resuming in a detached tmux session.`);
+` + `Claude is resuming in a detached tmux session.`);
   if (attach) {
     await configureTmuxBar(config, tmuxSession);
     console.log(`Attaching...
@@ -29767,6 +29770,60 @@ Purged ${red(String(purged))} session(s).`);
   });
 }
 var DEFAULT_REPO_URL = "https://raw.githubusercontent.com/kshartman/claude-session/main";
+async function cmdAgentStop(config, host, all) {
+  const machine = hostname();
+  const agentSock = "$HOME/.ssh/cs-agent.sock";
+  const stopLocal = () => {
+    const sock = join2(homedir2(), ".ssh", "cs-agent.sock");
+    Bun.spawnSync(["bash", "-c", `pkill -f "ssh-agent -a ${sock}" 2>/dev/null; rm -f "${sock}"`]);
+  };
+  const stopRemote = async (h) => {
+    const candidates = [h, h.toLowerCase()];
+    const short = h.split(".")[0];
+    if (short !== h)
+      candidates.push(short, short.toLowerCase());
+    const tryHosts = [...new Set(candidates)];
+    for (const tryHost of tryHosts) {
+      const proc = Bun.spawn([
+        "ssh",
+        tryHost,
+        "-o",
+        "ControlPath=none",
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "BatchMode=yes",
+        `pkill -f "ssh-agent -a ${agentSock}" 2>/dev/null; rm -f "${agentSock}"`
+      ], { stdout: "pipe", stderr: "pipe" });
+      if (await proc.exited === 0)
+        return true;
+    }
+    return false;
+  };
+  if (all) {
+    const hosts = await withDb(config, async (_db, sessions) => {
+      return sessions.aggregate([{ $group: { _id: "$machine" } }]).toArray();
+    });
+    stopLocal();
+    console.log(`  ${machine.split(".")[0]}: stopped`);
+    const remoteHosts = hosts.map((h) => h["_id"]).filter((h) => h.toLowerCase() !== machine.toLowerCase());
+    for (const h of remoteHosts) {
+      const shortName = h.split(".")[0];
+      const ok = await stopRemote(h);
+      console.log(`  ${shortName}: ${ok ? "stopped" : dim("unreachable")}`);
+    }
+  } else if (host) {
+    if (host.toLowerCase() === machine.toLowerCase() || host.toLowerCase() === machine.split(".")[0].toLowerCase()) {
+      stopLocal();
+    } else {
+      await stopRemote(host);
+    }
+    console.log(`Agent stopped on ${host}`);
+  } else {
+    stopLocal();
+    console.log(`Agent stopped`);
+  }
+}
 function getBaseUrl() {
   if (process.env["CS_REPO_URL"])
     return process.env["CS_REPO_URL"];
@@ -29959,6 +30016,7 @@ ${bold("Usage:")}
   cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
   cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
                                   Bulk hard delete matching sessions
+  cs agent stop [--host] [--all]  Stop SSH agent on host(s)
   cs update                       Update cs to latest version
   cs update --all                 Update cs on all known hosts via SSH
   cs version                      Show current version
@@ -29986,6 +30044,29 @@ async function main() {
   }
   if (command === "status") {
     await cmdStatus();
+    return;
+  }
+  if (command === "agent") {
+    const sub = args[1];
+    if (sub === "stop") {
+      let config2;
+      try {
+        config2 = loadConfig();
+      } catch (err) {
+        if (err instanceof ConfigError) {
+          console.error(err.message);
+          process.exit(1);
+        }
+        throw err;
+      }
+      const all = args.includes("--all");
+      const hostIdx = args.indexOf("--host");
+      const host = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
+      await cmdAgentStop(config2, host, all);
+    } else {
+      console.error("Usage: cs agent stop [--host <name>] [--all]");
+      process.exit(1);
+    }
     return;
   }
   if (command === "update") {
