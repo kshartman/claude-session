@@ -32,6 +32,7 @@ export interface CsConfig {
   remotePath?: string;
   repoUrl?: string;
   agentKeyTimeout?: number;
+  agentKeyFile?: string;
 }
 
 // --- config ---
@@ -84,6 +85,7 @@ export function loadConfig(): CsConfig {
     remotePath: typeof parsed["remotePath"] === "string" ? parsed["remotePath"] : "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin",
     repoUrl: typeof parsed["repoUrl"] === "string" ? parsed["repoUrl"] : undefined,
     agentKeyTimeout: typeof parsed["agentKeyTimeout"] === "number" ? parsed["agentKeyTimeout"] : 28800,
+    agentKeyFile: typeof parsed["agentKeyFile"] === "string" ? parsed["agentKeyFile"] : undefined,
   };
 }
 

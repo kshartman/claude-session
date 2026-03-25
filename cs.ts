@@ -589,9 +589,10 @@ async function ensureLocalAgent(
 
   if (exitCode !== 0) {
     // Agent running but no keys — prompt
+    const keyFile = config.agentKeyFile ? ` "${config.agentKeyFile}"` : "";
     console.log(yellow(`Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)...`));
     const addKey = Bun.spawn(["bash", "-c",
-      `SSH_AUTH_SOCK="${agentSock}" ssh-add -t ${keyTimeout}`
+      `SSH_AUTH_SOCK="${agentSock}" ssh-add -t ${keyTimeout}${keyFile}`
     ], {
       stdin: "inherit",
       stdout: "inherit",
@@ -775,7 +776,7 @@ async function cmdAttach(
       `export PATH="${config.remotePath}:\$PATH"; ` +
       `if ! ssh-add -l >/dev/null 2>&1; then ` +
       `  echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."; ` +
-      `  ssh-add -t ${keyTimeout}; ` +
+      `  ssh-add -t ${keyTimeout}${config.agentKeyFile ? ` "${config.agentKeyFile}"` : ""}; ` +
       `fi; ` +
       `exec tmux attach-session -t '${tmuxSession}'`,
     ], {

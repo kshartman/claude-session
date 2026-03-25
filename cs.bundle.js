@@ -28500,7 +28500,8 @@ function loadConfig() {
     noCron: parsed["noCron"] === true,
     remotePath: typeof parsed["remotePath"] === "string" ? parsed["remotePath"] : "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin",
     repoUrl: typeof parsed["repoUrl"] === "string" ? parsed["repoUrl"] : undefined,
-    agentKeyTimeout: typeof parsed["agentKeyTimeout"] === "number" ? parsed["agentKeyTimeout"] : 28800
+    agentKeyTimeout: typeof parsed["agentKeyTimeout"] === "number" ? parsed["agentKeyTimeout"] : 28800,
+    agentKeyFile: typeof parsed["agentKeyFile"] === "string" ? parsed["agentKeyFile"] : undefined
   };
 }
 
@@ -29120,11 +29121,12 @@ async function ensureLocalAgent(config, tmuxSession) {
     ]);
   }
   if (exitCode !== 0) {
+    const keyFile = config.agentKeyFile ? ` "${config.agentKeyFile}"` : "";
     console.log(yellow(`Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)...`));
     const addKey = Bun.spawn([
       "bash",
       "-c",
-      `SSH_AUTH_SOCK="${agentSock}" ssh-add -t ${keyTimeout}`
+      `SSH_AUTH_SOCK="${agentSock}" ssh-add -t ${keyTimeout}${keyFile}`
     ], {
       stdin: "inherit",
       stdout: "inherit",
@@ -29265,7 +29267,7 @@ async function cmdAttach(config, prefix, host) {
       "-o",
       "ControlPath=none",
       "-t",
-      `export SSH_AUTH_SOCK="${agentSock}"; ` + `export PATH="${config.remotePath}:$PATH"; ` + `if ! ssh-add -l >/dev/null 2>&1; then ` + `  echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."; ` + `  ssh-add -t ${keyTimeout}; ` + `fi; ` + `exec tmux attach-session -t '${tmuxSession}'`
+      `export SSH_AUTH_SOCK="${agentSock}"; ` + `export PATH="${config.remotePath}:$PATH"; ` + `if ! ssh-add -l >/dev/null 2>&1; then ` + `  echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."; ` + `  ssh-add -t ${keyTimeout}${config.agentKeyFile ? ` "${config.agentKeyFile}"` : ""}; ` + `fi; ` + `exec tmux attach-session -t '${tmuxSession}'`
     ], {
       stdin: "inherit",
       stdout: "inherit",
