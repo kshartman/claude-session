@@ -727,16 +727,29 @@ async function cmdAttach(
       );
     });
 
-    // Check if local agent has keys before forwarding
+    // Ensure SSH agent is running with keys before forwarding
     const agentCheck = Bun.spawnSync(["ssh-add", "-l"]);
     if (agentCheck.exitCode !== 0) {
-      console.log(yellow("SSH agent has no keys — adding default key..."));
+      // exitCode 2 = no agent, exitCode 1 = agent but no keys
+      // Source ssh-agent-setup if available, or start agent directly
+      if (agentCheck.exitCode === 2) {
+        console.log(yellow("No SSH agent — starting one..."));
+        Bun.spawnSync(["bash", "-lc",
+          `ssh-agent -a ~/.ssh/agent.sock 2>/dev/null || true; ` +
+          `echo SSH_AUTH_SOCK=~/.ssh/agent.sock`
+        ]);
+        process.env["SSH_AUTH_SOCK"] = join(homedir(), ".ssh", "agent.sock");
+      }
+
+      console.log(yellow("Adding SSH key..."));
       const addKey = Bun.spawn(["ssh-add"], {
         stdin: "inherit",
         stdout: "inherit",
         stderr: "inherit",
+        env: { ...process.env },
       });
       await addKey.exited;
+
       // Verify
       const recheck = Bun.spawnSync(["ssh-add", "-l"]);
       if (recheck.exitCode !== 0) {

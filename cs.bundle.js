@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.4.18";
+var VERSION = "1.4.19";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29233,11 +29233,21 @@ async function cmdAttach(config, prefix, host) {
     });
     const agentCheck = Bun.spawnSync(["ssh-add", "-l"]);
     if (agentCheck.exitCode !== 0) {
-      console.log(yellow("SSH agent has no keys \u2014 adding default key..."));
+      if (agentCheck.exitCode === 2) {
+        console.log(yellow("No SSH agent \u2014 starting one..."));
+        Bun.spawnSync([
+          "bash",
+          "-lc",
+          `ssh-agent -a ~/.ssh/agent.sock 2>/dev/null || true; echo SSH_AUTH_SOCK=~/.ssh/agent.sock`
+        ]);
+        process.env["SSH_AUTH_SOCK"] = join2(homedir2(), ".ssh", "agent.sock");
+      }
+      console.log(yellow("Adding SSH key..."));
       const addKey = Bun.spawn(["ssh-add"], {
         stdin: "inherit",
         stdout: "inherit",
-        stderr: "inherit"
+        stderr: "inherit",
+        env: { ...process.env }
       });
       await addKey.exited;
       const recheck = Bun.spawnSync(["ssh-add", "-l"]);
