@@ -1,7 +1,7 @@
 // --- types ---
 
 // VERSION is set here and in the VERSION file — keep in sync when releasing
-export const VERSION = "1.5.1";
+export const VERSION = "1.5.2";
 export const SCHEMA_VERSION = 1;
 
 export type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";
@@ -257,47 +257,6 @@ function tryReconstruct(
 }
 
 // --- jsonl parsing ---
-
-/** Check if a session JSONL is a compact/clear orphan (first user message is a system tag) */
-export async function isOrphanSession(filePath: string): Promise<boolean> {
-  try {
-    const file = Bun.file(filePath);
-    const text = await file.text();
-    const lines = text.split("\n");
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const obj = JSON.parse(trimmed) as Record<string, unknown>;
-        if (obj["type"] !== "user") continue;
-        const message = obj["message"] as Record<string, unknown> | undefined;
-        if (!message) continue;
-        const content = message["content"];
-        if (typeof content === "string") {
-          return content.startsWith("<");
-        }
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (
-              typeof block === "object" &&
-              block !== null &&
-              "text" in block &&
-              typeof (block as Record<string, unknown>)["text"] === "string"
-            ) {
-              return ((block as Record<string, unknown>)["text"] as string).startsWith("<");
-            }
-          }
-        }
-        return false;
-      } catch {
-        continue;
-      }
-    }
-  } catch {
-    // Can't read file — not an orphan
-  }
-  return false;
-}
 
 export interface JsonlParseResult {
   messageCount: number;

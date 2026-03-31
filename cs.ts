@@ -15,7 +15,6 @@ import {
   ConfigError,
   redactUri,
   parseSessionJsonl,
-  isOrphanSession,
   readSummary,
   findValidProjectPath,
   detectState,
@@ -224,9 +223,6 @@ async function cmdSync(
         const parsed = await parseSessionJsonl(filePath);
 
         if (parsed.messageCount === 0) continue;
-
-        // Skip compact/clear orphans
-        if (await isOrphanSession(filePath)) continue;
 
         const tmuxSessionName = tmuxName(sessionId, parsed.sessionName, projectName);
         // Also check legacy cs-<shortid> naming
@@ -1361,93 +1357,6 @@ function purgeOneSession(
   return { jsonlPath, sessionDir, deleted };
 }
 
-async function cmdGc(config: CsConfig, yes: boolean): Promise<void> {
-  const machine = hostname();
-  const claudeDir = join(homedir(), ".claude", "projects");
-
-  if (!existsSync(claudeDir)) {
-    console.log("No sessions found.");
-    return;
-  }
-
-  // Scan all local JSONL files for compact orphans
-  const orphans: { sessionId: string; projectPath: string; filePath: string }[] = [];
-  const projectDirs = readdirSync(claudeDir);
-
-  for (const dirName of projectDirs) {
-    const dirPath = join(claudeDir, dirName);
-    try {
-      if (!statSync(dirPath).isDirectory()) continue;
-    } catch {
-      continue;
-    }
-
-    const projectPath = findValidProjectPath(dirName);
-    if (!projectPath) continue;
-
-    let files: string[];
-    try {
-      files = readdirSync(dirPath).filter((f) => f.endsWith(".jsonl"));
-    } catch {
-      continue;
-    }
-
-    for (const file of files) {
-      const filePath = join(dirPath, file);
-      if (await isOrphanSession(filePath)) {
-        orphans.push({
-          sessionId: file.replace(".jsonl", ""),
-          projectPath,
-          filePath,
-        });
-      }
-    }
-  }
-
-  if (orphans.length === 0) {
-    console.log("No compact orphans found.");
-    return;
-  }
-
-  console.log(`Found ${orphans.length} compact orphan(s):\n`);
-  for (const o of orphans) {
-    console.log(`  ${dim(basename(o.projectPath))}  ${o.sessionId.slice(0, 14)}`);
-  }
-
-  if (!yes) {
-    console.log(`\nRun ${bold("cs gc --yes")} to purge them.`);
-    return;
-  }
-
-  // Purge files and MongoDB records
-  const { rmSync } = require("fs") as typeof import("fs");
-  let purged = 0;
-
-  await withDb(config, async (_db, sessions) => {
-    for (const o of orphans) {
-      // Delete JSONL file
-      try {
-        rmSync(o.filePath);
-      } catch {
-        // already gone
-      }
-      // Delete session directory if it exists
-      const sessionDir = join(claudeDir, `-${o.projectPath.slice(1).replace(/[/.]/g, "-")}`, o.sessionId);
-      if (existsSync(sessionDir)) {
-        rmSync(sessionDir, { recursive: true });
-      }
-      // Remove from MongoDB
-      await sessions.deleteOne({
-        session_id: o.sessionId,
-        machine: { $regex: `^${machine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
-      });
-      purged++;
-    }
-  });
-
-  console.log(`\nPurged ${red(String(purged))} orphan(s).`);
-}
-
 async function cmdPurge(
   config: CsConfig,
   pattern: string,
@@ -1577,6 +1486,84 @@ async function cmdPurge(
     }
 
     console.log(`\nPurged ${red(String(purged))} session(s).`);
+  });
+}
+
+async function cmdGc(
+  config: CsConfig,
+  confirm: boolean
+): Promise<void> {
+  await withDb(config, async (_db, sessions) => {
+    // Fetch all non-deleted sessions
+    const all = await sessions
+      .find({ deleted_at: null })
+      .sort({ updated_at: -1 })
+      .toArray();
+
+    // Group by (project_name, machine) — keep newest, rest are GC candidates
+    const groups = new Map<string, SessionRecord[]>();
+    for (const s of all) {
+      const key = `${s.project_name}\0${s.machine}`;
+      let group = groups.get(key);
+      if (!group) {
+        group = [];
+        groups.set(key, group);
+      }
+      group.push(s);
+    }
+
+    const candidates: SessionRecord[] = [];
+    for (const group of groups.values()) {
+      if (group.length <= 1) continue;
+      // Already sorted by updated_at desc — skip the first (newest)
+      candidates.push(...group.slice(1));
+    }
+
+    if (candidates.length === 0) {
+      console.log("No GC candidates — each project+host has at most one session.");
+      return;
+    }
+
+    // Sort candidates by updated_at desc for display
+    candidates.sort((a, b) => b.updated_at.getTime() - a.updated_at.getTime());
+
+    const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
+    const colWidths = [12, 14, 8, 8, 10, 30];
+    const rows = candidates.map((s) => {
+      const proj = s.project_name.length > 12 ? s.project_name.slice(0, 11) + ">" : s.project_name;
+      const title = s.title ?? "(no title)";
+      const truncTitle = title.length > 30 ? title.slice(0, 29) + ">" : title;
+      return [
+        staleText(proj, s.updated_at),
+        dim(s.session_id.slice(0, 14)),
+        machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]!),
+        stateColor(s.state),
+        relativeTime(s.updated_at),
+        staleText(truncTitle, s.updated_at),
+      ];
+    });
+
+    console.log(`${bold("GC candidates")}: ${candidates.length} older session(s) in projects with multiple sessions\n`);
+    console.log(formatTable(headers, rows, colWidths));
+
+    if (!confirm) {
+      console.log(`\nRun ${bold("cs gc --yes")} to soft-delete these sessions.`);
+      console.log(dim("  Then 'cs purge --deleted --all --yes' to permanently remove files."));
+      return;
+    }
+
+    // Soft-delete: set deleted_at (same as cs rm)
+    const now = new Date();
+    let deleted = 0;
+    for (const s of candidates) {
+      await sessions.updateOne(
+        { session_id: s.session_id, machine: s.machine },
+        { $set: { deleted_at: now } }
+      );
+      deleted++;
+    }
+
+    console.log(`\nSoft-deleted ${yellow(String(deleted))} session(s). Use ${bold("cs deleted")} to review, ${bold("cs purge --deleted --all --yes")} to permanently remove.`);
   });
 }
 
@@ -1856,7 +1843,8 @@ ${bold("Usage:")}
   cs rm --undo <id-or-name>       Restore a soft-deleted session
   cs prune [--days N] [--all]     Bulk soft-delete unnamed/untagged sessions
   cs deleted                      List soft-deleted sessions
-  cs gc [--yes]                    Purge compact/clear orphan sessions (local)
+  cs gc                           List duplicate sessions (same project+host, older ones)
+  cs gc --yes                     Soft-delete the duplicates
   cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
   cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
                                   Bulk hard delete matching sessions
