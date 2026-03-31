@@ -176,6 +176,8 @@ cs rm --undo <id-or-name>       # restore a soft-deleted session
 cs prune [--days N] [--all]     # bulk soft-delete unnamed/untagged sessions
 cs deleted                      # list soft-deleted sessions
 
+cs gc [--yes]                    # find and purge compact/clear orphan sessions (local)
+
 cs purge <pattern> [--yes]      # hard delete session + local files (irreversible)
 cs purge <pattern> --all [--yes] [--host <h>] [--deleted]
                                 # bulk hard delete matching sessions

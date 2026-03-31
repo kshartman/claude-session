@@ -187,6 +187,17 @@ Named and tagged sessions are never pruned.
 
 List soft-deleted sessions. Defaults to all hosts. Use `cs rm --undo <id>` to restore any of them.
 
+### `cs gc [--yes]`
+
+Find and purge compact/clear orphan sessions. When Claude Code runs `/compact` or `/clear`, it creates a new session file whose first message is a system tag — not a real conversation. These orphans clutter your session list.
+
+```bash
+cs gc                          # preview orphans found on this machine
+cs gc --yes                    # purge them (files + MongoDB records)
+```
+
+Sync also skips orphans automatically, so they won't re-enter MongoDB after a gc.
+
 ### `cs purge <pattern> [--yes] [--all] [--host <name>] [--deleted]`
 
 Hard delete sessions — removes MongoDB records, JSONL files, and session directories. Irreversible. Without `--yes`, shows what would be deleted. Must be run on the host where sessions live.
@@ -253,7 +264,9 @@ Config lives at `~/.config/cs/config.json`:
 | `listFQDN` | `true` | Show full hostnames; set `false` to show short names (e.g., `dev` instead of `dev.example.com`) |
 | `noCron` | `false` | Disable automatic cron sync setup on install and update |
 | `remotePath` | `$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin` | Extra PATH entries for remote SSH commands (tmux, claude) |
-| `agentKeyTimeout` | `28800` (8h) | How long SSH keys stay loaded in the agent (seconds)
+| `agentKeyTimeout` | `28800` (8h) | How long SSH keys stay loaded in the agent (seconds) |
+| `agentKeyFile` | `~/.ssh/id_ed25519` | Which SSH private key to load into the agent |
+| `repoUrl` | GitHub repo URL | Override the base URL for update/install downloads |
 
 ## Multi-machine setup
 

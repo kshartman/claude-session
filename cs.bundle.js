@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.5.0";
+var VERSION = "1.5.1";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -28636,6 +28636,42 @@ function tryReconstruct(segments, idx, current) {
       return result3;
   }
   return null;
+}
+async function isOrphanSession(filePath) {
+  try {
+    const file = Bun.file(filePath);
+    const text = await file.text();
+    const lines = text.split(`
+`);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed)
+        continue;
+      try {
+        const obj = JSON.parse(trimmed);
+        if (obj["type"] !== "user")
+          continue;
+        const message = obj["message"];
+        if (!message)
+          continue;
+        const content = message["content"];
+        if (typeof content === "string") {
+          return content.startsWith("<");
+        }
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (typeof block === "object" && block !== null && "text" in block && typeof block["text"] === "string") {
+              return block["text"].startsWith("<");
+            }
+          }
+        }
+        return false;
+      } catch {
+        continue;
+      }
+    }
+  } catch {}
+  return false;
 }
 async function parseSessionJsonl(filePath) {
   const file = Bun.file(filePath);
@@ -28875,6 +28911,8 @@ async function cmdSync(config, quiet) {
         const fileStat = statSync(filePath);
         const parsed = await parseSessionJsonl(filePath);
         if (parsed.messageCount === 0)
+          continue;
+        if (await isOrphanSession(filePath))
           continue;
         const tmuxSessionName = tmuxName(sessionId, parsed.sessionName, projectName);
         const tmuxInfo = tmuxSessions.get(tmuxSessionName) ?? tmuxSessions.get(`cs-${sessionId.slice(0, 8)}`);
@@ -29670,6 +29708,78 @@ function purgeOneSession(session, claudeDir) {
   }
   return { jsonlPath, sessionDir, deleted };
 }
+async function cmdGc(config, yes) {
+  const machine = hostname();
+  const claudeDir = join2(homedir2(), ".claude", "projects");
+  if (!existsSync2(claudeDir)) {
+    console.log("No sessions found.");
+    return;
+  }
+  const orphans = [];
+  const projectDirs = readdirSync(claudeDir);
+  for (const dirName of projectDirs) {
+    const dirPath = join2(claudeDir, dirName);
+    try {
+      if (!statSync(dirPath).isDirectory())
+        continue;
+    } catch {
+      continue;
+    }
+    const projectPath = findValidProjectPath(dirName);
+    if (!projectPath)
+      continue;
+    let files;
+    try {
+      files = readdirSync(dirPath).filter((f) => f.endsWith(".jsonl"));
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      const filePath = join2(dirPath, file);
+      if (await isOrphanSession(filePath)) {
+        orphans.push({
+          sessionId: file.replace(".jsonl", ""),
+          projectPath,
+          filePath
+        });
+      }
+    }
+  }
+  if (orphans.length === 0) {
+    console.log("No compact orphans found.");
+    return;
+  }
+  console.log(`Found ${orphans.length} compact orphan(s):
+`);
+  for (const o of orphans) {
+    console.log(`  ${dim(basename(o.projectPath))}  ${o.sessionId.slice(0, 14)}`);
+  }
+  if (!yes) {
+    console.log(`
+Run ${bold("cs gc --yes")} to purge them.`);
+    return;
+  }
+  const { rmSync } = __require("fs");
+  let purged = 0;
+  await withDb(config, async (_db, sessions) => {
+    for (const o of orphans) {
+      try {
+        rmSync(o.filePath);
+      } catch {}
+      const sessionDir = join2(claudeDir, `-${o.projectPath.slice(1).replace(/[/.]/g, "-")}`, o.sessionId);
+      if (existsSync2(sessionDir)) {
+        rmSync(sessionDir, { recursive: true });
+      }
+      await sessions.deleteOne({
+        session_id: o.sessionId,
+        machine: { $regex: `^${machine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" }
+      });
+      purged++;
+    }
+  });
+  console.log(`
+Purged ${red(String(purged))} orphan(s).`);
+}
 async function cmdPurge(config, pattern, confirm, all, host, deletedOnly) {
   const machine = hostname();
   const claudeDir = join2(homedir2(), ".claude", "projects");
@@ -30015,6 +30125,7 @@ ${bold("Usage:")}
   cs rm --undo <id-or-name>       Restore a soft-deleted session
   cs prune [--days N] [--all]     Bulk soft-delete unnamed/untagged sessions
   cs deleted                      List soft-deleted sessions
+  cs gc [--yes]                    Purge compact/clear orphan sessions (local)
   cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
   cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
                                   Bulk hard delete matching sessions
@@ -30217,6 +30328,11 @@ async function main() {
       const hostIdx = args.indexOf("--host");
       const host = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
       await cmdDeleted(config, { local, host });
+      break;
+    }
+    case "gc": {
+      const yes = args.includes("--yes");
+      await cmdGc(config, yes);
       break;
     }
     case "purge": {

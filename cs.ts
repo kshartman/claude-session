@@ -15,6 +15,7 @@ import {
   ConfigError,
   redactUri,
   parseSessionJsonl,
+  isOrphanSession,
   readSummary,
   findValidProjectPath,
   detectState,
@@ -223,6 +224,9 @@ async function cmdSync(
         const parsed = await parseSessionJsonl(filePath);
 
         if (parsed.messageCount === 0) continue;
+
+        // Skip compact/clear orphans
+        if (await isOrphanSession(filePath)) continue;
 
         const tmuxSessionName = tmuxName(sessionId, parsed.sessionName, projectName);
         // Also check legacy cs-<shortid> naming
@@ -1357,6 +1361,93 @@ function purgeOneSession(
   return { jsonlPath, sessionDir, deleted };
 }
 
+async function cmdGc(config: CsConfig, yes: boolean): Promise<void> {
+  const machine = hostname();
+  const claudeDir = join(homedir(), ".claude", "projects");
+
+  if (!existsSync(claudeDir)) {
+    console.log("No sessions found.");
+    return;
+  }
+
+  // Scan all local JSONL files for compact orphans
+  const orphans: { sessionId: string; projectPath: string; filePath: string }[] = [];
+  const projectDirs = readdirSync(claudeDir);
+
+  for (const dirName of projectDirs) {
+    const dirPath = join(claudeDir, dirName);
+    try {
+      if (!statSync(dirPath).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+
+    const projectPath = findValidProjectPath(dirName);
+    if (!projectPath) continue;
+
+    let files: string[];
+    try {
+      files = readdirSync(dirPath).filter((f) => f.endsWith(".jsonl"));
+    } catch {
+      continue;
+    }
+
+    for (const file of files) {
+      const filePath = join(dirPath, file);
+      if (await isOrphanSession(filePath)) {
+        orphans.push({
+          sessionId: file.replace(".jsonl", ""),
+          projectPath,
+          filePath,
+        });
+      }
+    }
+  }
+
+  if (orphans.length === 0) {
+    console.log("No compact orphans found.");
+    return;
+  }
+
+  console.log(`Found ${orphans.length} compact orphan(s):\n`);
+  for (const o of orphans) {
+    console.log(`  ${dim(basename(o.projectPath))}  ${o.sessionId.slice(0, 14)}`);
+  }
+
+  if (!yes) {
+    console.log(`\nRun ${bold("cs gc --yes")} to purge them.`);
+    return;
+  }
+
+  // Purge files and MongoDB records
+  const { rmSync } = require("fs") as typeof import("fs");
+  let purged = 0;
+
+  await withDb(config, async (_db, sessions) => {
+    for (const o of orphans) {
+      // Delete JSONL file
+      try {
+        rmSync(o.filePath);
+      } catch {
+        // already gone
+      }
+      // Delete session directory if it exists
+      const sessionDir = join(claudeDir, `-${o.projectPath.slice(1).replace(/[/.]/g, "-")}`, o.sessionId);
+      if (existsSync(sessionDir)) {
+        rmSync(sessionDir, { recursive: true });
+      }
+      // Remove from MongoDB
+      await sessions.deleteOne({
+        session_id: o.sessionId,
+        machine: { $regex: `^${machine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
+      });
+      purged++;
+    }
+  });
+
+  console.log(`\nPurged ${red(String(purged))} orphan(s).`);
+}
+
 async function cmdPurge(
   config: CsConfig,
   pattern: string,
@@ -1765,6 +1856,7 @@ ${bold("Usage:")}
   cs rm --undo <id-or-name>       Restore a soft-deleted session
   cs prune [--days N] [--all]     Bulk soft-delete unnamed/untagged sessions
   cs deleted                      List soft-deleted sessions
+  cs gc [--yes]                    Purge compact/clear orphan sessions (local)
   cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
   cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
                                   Bulk hard delete matching sessions
@@ -1994,6 +2086,12 @@ async function main(): Promise<void> {
       const hostIdx = args.indexOf("--host");
       const host = hostIdx >= 0 ? (args[hostIdx + 1] ?? null) : null;
       await cmdDeleted(config, { local, host });
+      break;
+    }
+
+    case "gc": {
+      const yes = args.includes("--yes");
+      await cmdGc(config, yes);
       break;
     }
 

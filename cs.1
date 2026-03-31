@@ -158,6 +158,16 @@ prunes regardless of age. Named and tagged sessions are never pruned.
 .BI "cs deleted" " [--local] [--host name]"
 List soft-deleted sessions with deletion timestamps. Defaults to all hosts.
 .TP
+.BI "cs gc" " [--yes]"
+Find and purge compact/clear orphan sessions on this machine. Without
+.BR --yes ,
+shows what would be deleted. Orphans are session files created by
+.B /compact
+or
+.B /clear
+whose first message is a system tag, not real user input. Sync also
+skips orphans automatically.
+.TP
 .BI "cs purge" " pattern [--yes] [--all] [--host name] [--deleted]"
 Hard delete sessions. Removes MongoDB records, JSONL files, and session
 directories. Without
