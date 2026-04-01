@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.5.2";
+var VERSION = "1.5.3";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29023,10 +29023,16 @@ async function cmdList(config, opts) {
     if (opts.project) {
       filter["project_name"] = opts.project;
     }
-    const results = await sessions.find({ ...filter, deleted_at: null }).sort({ updated_at: -1 }).limit(opts.limit).toArray();
+    const baseFilter = { ...filter, deleted_at: null };
+    const total = await sessions.countDocuments(baseFilter);
+    const results = await sessions.find(baseFilter).sort({ updated_at: -1 }).limit(opts.limit).toArray();
     if (results.length === 0) {
       console.log("No sessions found.");
       return;
+    }
+    if (total > results.length) {
+      console.log(dim(`Showing ${results.length} of ${total} sessions (use --limit to see more)
+`));
     }
     const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
     const colWidths = [12, 14, 8, 8, 10, 30];
@@ -30087,7 +30093,7 @@ ${bold("List options:")}
   --local                         This host only
   --host <hostname>               Filter by host
   --project <name>                Filter by project
-  --limit <n>                     Max results (default: 20)
+  --limit <n>                     Max results (default: 40)
 
 ${bold("Install:")}
   curl -sSL ${getBaseUrl()}/install-remote.sh | bash
@@ -30180,7 +30186,7 @@ async function main() {
       const projectIdx = args.indexOf("--project");
       const project = projectIdx >= 0 ? args[projectIdx + 1] ?? null : null;
       const limitIdx = args.indexOf("--limit");
-      const limit = limitIdx >= 0 ? parseInt(args[limitIdx + 1] ?? "20", 10) : 20;
+      const limit = limitIdx >= 0 ? parseInt(args[limitIdx + 1] ?? "40", 10) : 40;
       await cmdList(config, { local, host, project, limit });
       break;
     }
