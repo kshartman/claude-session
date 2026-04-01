@@ -54,9 +54,11 @@ The installer sets up periodic sync every 5 minutes — crontab on Linux, Launch
 
 ## Commands
 
-### `cs`
+### `cs [--sort [field]]`
 
 Show the local dashboard — a single merged table of this machine's sessions with live tmux state overlaid on database records. No duplicates. Works even if MongoDB is down (shows local tmux sessions only).
+
+Use `--sort` to change the sort order. `--sort` alone sorts by title. Valid fields: `title`, `updated`, `host`, `project`. When a sort field is specified, ties are broken by the remaining fields in that order.
 
 ### `cs sync [--quiet]`
 
@@ -64,7 +66,7 @@ Scan `~/.claude/projects/` for session files and upsert metadata to MongoDB. Det
 
 `--quiet` suppresses output (for the `.bashrc` hook).
 
-### `cs list [--local] [--host <name>] [--project <name>] [--limit <n>]`
+### `cs list [--local] [--host <name>] [--project <name>] [--limit <n>] [--sort [field]]`
 
 List sessions from the database. Defaults to all hosts, sorted by most recent.
 
@@ -74,6 +76,7 @@ cs list --local                # this host only
 cs list --host dev             # specific host
 cs list --project trading      # filter by project
 cs list --limit 5              # show 5 most recent
+cs list --sort project         # sort by project name
 ```
 
 ### `cs launch <project> [prompt]`

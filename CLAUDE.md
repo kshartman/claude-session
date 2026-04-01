@@ -124,16 +124,18 @@ produce `null` (not an error).
 ## Commands
 
 ```
-cs                              # local dashboard: merged tmux + DB table for this machine
+cs [--sort [field]]              # local dashboard: merged tmux + DB table for this machine
                                 # live state overlaid, deduped, silent DB fallback
+                                # --sort: title (default), updated, host, project
 
 cs sync [--quiet]               # harvest ~/.claude/projects/ → upsert to MongoDB
                                 # detect tmux sessions and update state
                                 # --quiet suppresses output (for cron/launchctl)
 
-cs list [--local] [--host <h>] [--project <name>] [--limit <n>]
+cs list [--local] [--host <h>] [--project <name>] [--limit <n>] [--sort [field]]
                                 # default: all hosts, sorted by updated_at desc
                                 # --local: this host only
+                                # --sort: title (default), updated, host, project
                                 # output: table with columns:
                                 #   MACHINE | PROJECT | TITLE | TAG | STATE | UPDATED | ID
 

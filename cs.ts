@@ -34,6 +34,49 @@ import {
   staleText,
 } from "./lib";
 
+// --- sort ---
+
+type SortField = "title" | "updated" | "host" | "project";
+const SORT_FIELDS: SortField[] = ["title", "updated", "host", "project"];
+
+function parseSort(args: string[]): SortField | null {
+  const idx = args.indexOf("--sort");
+  if (idx < 0) return null;
+  const val = args[idx + 1];
+  if (!val || val.startsWith("--")) return "title"; // --sort alone defaults to title
+  if (!SORT_FIELDS.includes(val as SortField)) {
+    console.error(`Invalid sort field: ${val}. Valid: ${SORT_FIELDS.join(", ")}`);
+    process.exit(1);
+  }
+  return val as SortField;
+}
+
+function sortSessions<T extends SessionRecord>(sessions: T[], primary: SortField): void {
+  // Build sort cascade: primary first, then remaining in canonical order
+  const cascade = [primary, ...SORT_FIELDS.filter((f) => f !== primary)];
+  sessions.sort((a, b) => {
+    for (const field of cascade) {
+      let cmp = 0;
+      switch (field) {
+        case "title":
+          cmp = (a.title ?? "").localeCompare(b.title ?? "");
+          break;
+        case "updated":
+          cmp = b.updated_at.getTime() - a.updated_at.getTime();
+          break;
+        case "host":
+          cmp = a.machine.localeCompare(b.machine);
+          break;
+        case "project":
+          cmp = a.project_name.localeCompare(b.project_name);
+          break;
+      }
+      if (cmp !== 0) return cmp;
+    }
+    return 0;
+  });
+}
+
 // --- db ---
 
 async function withDb<T>(
@@ -311,7 +354,7 @@ async function cmdSync(
 
 // --- commands ---
 
-async function cmdDashboard(config: CsConfig): Promise<void> {
+async function cmdDashboard(config: CsConfig, sort: SortField | null): Promise<void> {
   const machine = hostname();
   requireTmux();
 
@@ -330,6 +373,10 @@ async function cmdDashboard(config: CsConfig): Promise<void> {
       .limit(15)
       .toArray();
   });
+
+  if (dbSessions && sort) {
+    sortSessions(dbSessions, sort);
+  }
 
   console.log(bold("  Claude Session Manager\n"));
 
@@ -405,6 +452,7 @@ async function cmdList(
     host: string | null;
     project: string | null;
     limit: number;
+    sort: SortField | null;
   }
 ): Promise<void> {
   await withDb(config, async (_db, sessions) => {
@@ -428,6 +476,10 @@ async function cmdList(
       .sort({ updated_at: -1 })
       .limit(opts.limit)
       .toArray();
+
+    if (opts.sort) {
+      sortSessions(results, opts.sort);
+    }
 
     if (results.length === 0) {
       console.log("No sessions found.");
@@ -1831,7 +1883,7 @@ function printUsage(): void {
   console.log(`${bold("cs")} — Claude Session Manager
 
 ${bold("Usage:")}
-  cs                              Smart dashboard
+  cs [--sort [field]]              Smart dashboard
   cs sync [--quiet]               Sync sessions to MongoDB
   cs list [options]               List sessions
   cs launch <project> [prompt]    Launch Claude in detached tmux
@@ -1859,7 +1911,8 @@ ${bold("Usage:")}
   cs update --all                 Update cs on all known hosts via SSH
   cs version                      Show current version
 
-${bold("List options:")}
+${bold("List/dashboard options:")}
+  --sort [field]                  Sort by: title, updated, host, project (default: title)
   --local                         This host only
   --host <hostname>               Filter by host
   --project <name>                Filter by project
@@ -1948,9 +2001,10 @@ async function main(): Promise<void> {
     throw err;
   }
 
-  // Dashboard (bare cs)
-  if (!command) {
-    await cmdDashboard(config);
+  // Dashboard (bare cs, or cs --sort)
+  if (!command || command === "--sort") {
+    const sort = parseSort(args);
+    await cmdDashboard(config, sort);
     return;
   }
 
@@ -1972,7 +2026,8 @@ async function main(): Promise<void> {
       const limitIdx = args.indexOf("--limit");
       const limit =
         limitIdx >= 0 ? parseInt(args[limitIdx + 1] ?? "40", 10) : 40;
-      await cmdList(config, { local, host, project, limit });
+      const sort = parseSort(args);
+      await cmdList(config, { local, host, project, limit, sort });
       break;
     }
 
