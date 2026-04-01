@@ -51,6 +51,15 @@ function parseSort(args: string[]): SortField | null {
   return val as SortField;
 }
 
+function mongoSortSpec(field: SortField): Record<string, 1 | -1> {
+  switch (field) {
+    case "title": return { title: 1 };
+    case "updated": return { updated_at: -1 };
+    case "host": return { machine: 1 };
+    case "project": return { project_name: 1 };
+  }
+}
+
 function sortSessions<T extends SessionRecord>(sessions: T[], primary: SortField): void {
   // Build sort cascade: primary first, then remaining in canonical order
   const cascade = [primary, ...SORT_FIELDS.filter((f) => f !== primary)];
@@ -367,9 +376,10 @@ async function cmdDashboard(config: CsConfig, sort: SortField | null): Promise<v
 
   // Try MongoDB for this machine's sessions
   const dbSessions = await tryWithDb(config, async (_db, sessions) => {
+    const dbSort = sort ? mongoSortSpec(sort) : { updated_at: -1 as const };
     return sessions
       .find({ machine, deleted_at: null })
-      .sort({ updated_at: -1 })
+      .sort(dbSort)
       .limit(15)
       .toArray();
   });
@@ -471,13 +481,18 @@ async function cmdList(
 
     const baseFilter = { ...filter, deleted_at: null };
     const total = await sessions.countDocuments(baseFilter);
+
+    // When sorting by a non-default field, we need MongoDB to sort+limit
+    // on that field so the limit cuts the right records
+    const mongoSort = opts.sort ? mongoSortSpec(opts.sort) : { updated_at: -1 as const };
     const results = await sessions
       .find(baseFilter)
-      .sort({ updated_at: -1 })
+      .sort(mongoSort)
       .limit(opts.limit)
       .toArray();
 
     if (opts.sort) {
+      // Re-sort in memory with full cascade (MongoDB only sorts on primary)
       sortSessions(results, opts.sort);
     }
 

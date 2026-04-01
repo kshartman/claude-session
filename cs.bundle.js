@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.5.3";
+var VERSION = "1.5.5";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -28746,6 +28746,57 @@ function tmuxName(sessionId, title, projectName) {
 }
 
 // cs.ts
+var SORT_FIELDS = ["title", "updated", "host", "project"];
+function parseSort(args) {
+  const idx = args.indexOf("--sort");
+  if (idx < 0)
+    return null;
+  const val = args[idx + 1];
+  if (!val || val.startsWith("--"))
+    return "title";
+  if (!SORT_FIELDS.includes(val)) {
+    console.error(`Invalid sort field: ${val}. Valid: ${SORT_FIELDS.join(", ")}`);
+    process.exit(1);
+  }
+  return val;
+}
+function mongoSortSpec(field) {
+  switch (field) {
+    case "title":
+      return { title: 1 };
+    case "updated":
+      return { updated_at: -1 };
+    case "host":
+      return { machine: 1 };
+    case "project":
+      return { project_name: 1 };
+  }
+}
+function sortSessions(sessions, primary) {
+  const cascade = [primary, ...SORT_FIELDS.filter((f) => f !== primary)];
+  sessions.sort((a, b) => {
+    for (const field of cascade) {
+      let cmp = 0;
+      switch (field) {
+        case "title":
+          cmp = (a.title ?? "").localeCompare(b.title ?? "");
+          break;
+        case "updated":
+          cmp = b.updated_at.getTime() - a.updated_at.getTime();
+          break;
+        case "host":
+          cmp = a.machine.localeCompare(b.machine);
+          break;
+        case "project":
+          cmp = a.project_name.localeCompare(b.project_name);
+          break;
+      }
+      if (cmp !== 0)
+        return cmp;
+    }
+    return 0;
+  });
+}
 async function withDb(config, fn) {
   const client = new import_mongodb.MongoClient(config.mongoUri);
   try {
@@ -28942,7 +28993,7 @@ async function cmdSync(config, quiet) {
     }
   });
 }
-async function cmdDashboard(config) {
+async function cmdDashboard(config, sort) {
   const machine = hostname();
   requireTmux();
   const tmuxSessions = await tmuxListSessions();
@@ -28951,8 +29002,12 @@ async function cmdDashboard(config) {
     liveStates.set(name, await detectLiveState(name));
   }
   const dbSessions = await tryWithDb(config, async (_db, sessions) => {
-    return sessions.find({ machine, deleted_at: null }).sort({ updated_at: -1 }).limit(15).toArray();
+    const dbSort = sort ? mongoSortSpec(sort) : { updated_at: -1 };
+    return sessions.find({ machine, deleted_at: null }).sort(dbSort).limit(15).toArray();
   });
+  if (dbSessions && sort) {
+    sortSessions(dbSessions, sort);
+  }
   console.log(bold(`  Claude Session Manager
 `));
   const headers = ["PROJECT", "ID", "STATE", "UPDATED", "TITLE"];
@@ -29025,7 +29080,11 @@ async function cmdList(config, opts) {
     }
     const baseFilter = { ...filter, deleted_at: null };
     const total = await sessions.countDocuments(baseFilter);
-    const results = await sessions.find(baseFilter).sort({ updated_at: -1 }).limit(opts.limit).toArray();
+    const mongoSort = opts.sort ? mongoSortSpec(opts.sort) : { updated_at: -1 };
+    const results = await sessions.find(baseFilter).sort(mongoSort).limit(opts.limit).toArray();
+    if (opts.sort) {
+      sortSessions(results, opts.sort);
+    }
     if (results.length === 0) {
       console.log("No sessions found.");
       return;
@@ -30061,7 +30120,7 @@ function printUsage() {
   console.log(`${bold("cs")} \u2014 Claude Session Manager
 
 ${bold("Usage:")}
-  cs                              Smart dashboard
+  cs [--sort [field]]              Smart dashboard
   cs sync [--quiet]               Sync sessions to MongoDB
   cs list [options]               List sessions
   cs launch <project> [prompt]    Launch Claude in detached tmux
@@ -30089,7 +30148,8 @@ ${bold("Usage:")}
   cs update --all                 Update cs on all known hosts via SSH
   cs version                      Show current version
 
-${bold("List options:")}
+${bold("List/dashboard options:")}
+  --sort [field]                  Sort by: title, updated, host, project (default: title)
   --local                         This host only
   --host <hostname>               Filter by host
   --project <name>                Filter by project
@@ -30169,8 +30229,9 @@ async function main() {
     }
     throw err;
   }
-  if (!command) {
-    await cmdDashboard(config);
+  if (!command || command === "--sort") {
+    const sort = parseSort(args);
+    await cmdDashboard(config, sort);
     return;
   }
   switch (command) {
@@ -30187,7 +30248,8 @@ async function main() {
       const project = projectIdx >= 0 ? args[projectIdx + 1] ?? null : null;
       const limitIdx = args.indexOf("--limit");
       const limit = limitIdx >= 0 ? parseInt(args[limitIdx + 1] ?? "40", 10) : 40;
-      await cmdList(config, { local, host, project, limit });
+      const sort = parseSort(args);
+      await cmdList(config, { local, host, project, limit, sort });
       break;
     }
     case "launch": {
