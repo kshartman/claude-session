@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.5.5";
+var VERSION = "1.5.6";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29186,7 +29186,8 @@ async function ensureLocalAgent(config, tmuxSession) {
     ]);
   }
   if (exitCode !== 0) {
-    const keyFile = config.agentKeyFile ? ` "${config.agentKeyFile}"` : "";
+    const expandedKeyFile = config.agentKeyFile?.replace(/^~/, homedir2());
+    const keyFile = expandedKeyFile ? ` "${expandedKeyFile}"` : "";
     console.log(yellow(`Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)...`));
     const addKey = Bun.spawn([
       "bash",
@@ -29332,7 +29333,7 @@ async function cmdAttach(config, prefix, host) {
       "-o",
       "ControlPath=none",
       "-t",
-      `export SSH_AUTH_SOCK="${agentSock}"; ` + `export PATH="${config.remotePath}:$PATH"; ` + `if ! ssh-add -l >/dev/null 2>&1; then ` + `  echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."; ` + `  ssh-add -t ${keyTimeout}${config.agentKeyFile ? ` "${config.agentKeyFile}"` : ""}; ` + `fi; ` + `exec tmux attach-session -t '${tmuxSession}'`
+      `export SSH_AUTH_SOCK="${agentSock}"; ` + `export PATH="${config.remotePath}:$PATH"; ` + `if ! ssh-add -l >/dev/null 2>&1; then ` + `  echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."; ` + `  ssh-add -t ${keyTimeout}${config.agentKeyFile ? ` "${config.agentKeyFile.replace(/^~/, "$HOME")}"` : ""}; ` + `fi; ` + `exec tmux attach-session -t '${tmuxSession}'`
     ], {
       stdin: "inherit",
       stdout: "inherit",
