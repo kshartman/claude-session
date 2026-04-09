@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.5.6";
+var VERSION = "1.5.7";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -28993,7 +28993,14 @@ async function cmdSync(config, quiet) {
     }
   });
 }
-async function cmdDashboard(config, sort) {
+async function isClaudeSession(tmuxSession) {
+  const result = Bun.spawnSync(["tmux", "list-panes", "-t", tmuxSession, "-F", "#{pane_current_command}"]);
+  if (result.exitCode !== 0)
+    return false;
+  return result.stdout.toString().split(`
+`).some((cmd) => cmd.trim() === "claude");
+}
+async function cmdDashboard(config, sort, showOrphans) {
   const machine = hostname();
   requireTmux();
   const tmuxSessions = await tmuxListSessions();
@@ -29034,15 +29041,17 @@ async function cmdDashboard(config, sort) {
         staleText(truncTitle, s.updated_at)
       ];
     });
-    for (const [name] of tmuxSessions) {
-      if (!seenTmux.has(name)) {
-        rows.unshift([
-          dim("\u2014"),
-          dim("\u2014"),
-          stateColor(liveStates.get(name) ?? null),
-          dim("live"),
-          name
-        ]);
+    if (showOrphans) {
+      for (const [name] of tmuxSessions) {
+        if (!seenTmux.has(name) && await isClaudeSession(name)) {
+          rows.unshift([
+            dim("\u2014"),
+            dim("\u2014"),
+            stateColor(liveStates.get(name) ?? null),
+            dim("live"),
+            name
+          ]);
+        }
       }
     }
     if (rows.length > 0) {
@@ -30121,7 +30130,7 @@ function printUsage() {
   console.log(`${bold("cs")} \u2014 Claude Session Manager
 
 ${bold("Usage:")}
-  cs [--sort [field]]              Smart dashboard
+  cs [--sort [field]] [--orphans]  Smart dashboard (--orphans: show untracked claude tmux sessions)
   cs sync [--quiet]               Sync sessions to MongoDB
   cs list [options]               List sessions
   cs launch <project> [prompt]    Launch Claude in detached tmux
@@ -30230,9 +30239,10 @@ async function main() {
     }
     throw err;
   }
-  if (!command || command === "--sort") {
+  if (!command || command === "--sort" || command === "--orphans") {
     const sort = parseSort(args);
-    await cmdDashboard(config, sort);
+    const showOrphans = args.includes("--orphans");
+    await cmdDashboard(config, sort, showOrphans);
     return;
   }
   switch (command) {

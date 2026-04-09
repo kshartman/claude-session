@@ -363,7 +363,13 @@ async function cmdSync(
 
 // --- commands ---
 
-async function cmdDashboard(config: CsConfig, sort: SortField | null): Promise<void> {
+async function isClaudeSession(tmuxSession: string): Promise<boolean> {
+  const result = Bun.spawnSync(["tmux", "list-panes", "-t", tmuxSession, "-F", "#{pane_current_command}"]);
+  if (result.exitCode !== 0) return false;
+  return result.stdout.toString().split("\n").some((cmd) => cmd.trim() === "claude");
+}
+
+async function cmdDashboard(config: CsConfig, sort: SortField | null, showOrphans: boolean): Promise<void> {
   const machine = hostname();
   requireTmux();
 
@@ -419,16 +425,18 @@ async function cmdDashboard(config: CsConfig, sort: SortField | null): Promise<v
       ];
     });
 
-    // Add any tmux sessions not in DB (e.g., launched outside cs)
-    for (const [name] of tmuxSessions) {
-      if (!seenTmux.has(name)) {
-        rows.unshift([
-          dim("—"),
-          dim("—"),
-          stateColor(liveStates.get(name) ?? null),
-          dim("live"),
-          name,
-        ]);
+    // Add untracked tmux sessions running claude (only with --orphans)
+    if (showOrphans) {
+      for (const [name] of tmuxSessions) {
+        if (!seenTmux.has(name) && await isClaudeSession(name)) {
+          rows.unshift([
+            dim("—"),
+            dim("—"),
+            stateColor(liveStates.get(name) ?? null),
+            dim("live"),
+            name,
+          ]);
+        }
       }
     }
 
@@ -1899,7 +1907,7 @@ function printUsage(): void {
   console.log(`${bold("cs")} — Claude Session Manager
 
 ${bold("Usage:")}
-  cs [--sort [field]]              Smart dashboard
+  cs [--sort [field]] [--orphans]  Smart dashboard (--orphans: show untracked claude tmux sessions)
   cs sync [--quiet]               Sync sessions to MongoDB
   cs list [options]               List sessions
   cs launch <project> [prompt]    Launch Claude in detached tmux
@@ -2018,9 +2026,10 @@ async function main(): Promise<void> {
   }
 
   // Dashboard (bare cs, or cs --sort)
-  if (!command || command === "--sort") {
+  if (!command || command === "--sort" || command === "--orphans") {
     const sort = parseSort(args);
-    await cmdDashboard(config, sort);
+    const showOrphans = args.includes("--orphans");
+    await cmdDashboard(config, sort, showOrphans);
     return;
   }
 
