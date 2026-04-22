@@ -5,6 +5,7 @@ import {
   matchPrefix,
   shortId,
   tmuxName,
+  shellQuote,
   relativeTime,
   padRight,
   formatTable,
@@ -192,6 +193,21 @@ describe("schema", () => {
 });
 
 // --- color functions ---
+
+describe("shellQuote", () => {
+  test("wraps in single quotes", () => {
+    expect(shellQuote("hello")).toBe("'hello'");
+  });
+  test("escapes embedded single quotes", () => {
+    expect(shellQuote("it's")).toBe("'it'\\''s'");
+  });
+  test("handles injection attempt", () => {
+    expect(shellQuote("x'; rm -rf /; '")).toBe("'x'\\''; rm -rf /; '\\'''");
+  });
+  test("handles empty string", () => {
+    expect(shellQuote("")).toBe("''");
+  });
+});
 
 describe("colors", () => {
   test("stateColor returns colored text", () => {

@@ -1,7 +1,7 @@
 // --- types ---
 
 // VERSION is set here and in the VERSION file — keep in sync when releasing
-export const VERSION = "1.5.7";
+export const VERSION = "1.5.8";
 export const SCHEMA_VERSION = 1;
 
 export type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";
@@ -432,6 +432,12 @@ export function formatTable(
     row.map((cell, i) => padRight(cell, colWidths[i]!)).join("  ")
   );
   return [headerLine, separator, ...dataLines].join("\n");
+}
+
+// --- shell quoting ---
+
+export function shellQuote(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
 // --- tmux session name ---

@@ -54,9 +54,11 @@ The installer sets up periodic sync every 5 minutes — crontab on Linux, Launch
 
 ## Commands
 
-### `cs [--sort [field]]`
+### `cs [--sort [field]] [--orphans]`
 
 Show the local dashboard — a single merged table of this machine's sessions with live tmux state overlaid on database records. No duplicates. Works even if MongoDB is down (shows local tmux sessions only).
+
+Use `--orphans` to include untracked tmux sessions that are running Claude but have no database record (e.g., sessions started manually outside cs).
 
 Use `--sort` to change the sort order. `--sort` alone sorts by title. Valid fields: `title`, `updated`, `host`, `project`. When a sort field is specified, ties are broken by the remaining fields in that order.
 

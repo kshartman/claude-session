@@ -80,6 +80,7 @@ In `~/.config/cs/config.json`:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `agentKeyTimeout` | `28800` (8h) | Seconds before loaded keys expire. Set to `0` for no expiry (not recommended). |
+| `agentKeyFile` | `~/.ssh/id_ed25519` | Which SSH private key to load into the agent. Supports `~` (expanded automatically). |
 
 ## Managing agents
 

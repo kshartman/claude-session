@@ -124,9 +124,10 @@ produce `null` (not an error).
 ## Commands
 
 ```
-cs [--sort [field]]              # local dashboard: merged tmux + DB table for this machine
+cs [--sort [field]] [--orphans]  # local dashboard: merged tmux + DB table for this machine
                                 # live state overlaid, deduped, silent DB fallback
                                 # --sort: title (default), updated, host, project
+                                # --orphans: show untracked tmux sessions running claude
 
 cs sync [--quiet]               # harvest ~/.claude/projects/ → upsert to MongoDB
                                 # detect tmux sessions and update state
@@ -229,10 +230,15 @@ Two TypeScript files:
   // --- types ---
   // --- config ---
   // --- colors ---
-  // --- jsonl parsing ---
-  // --- state detection ---
+  // --- time formatting ---
   // --- path decoding ---
+  // --- jsonl parsing ---
+  // --- summary reading ---
+  // --- state detection ---
   // --- prefix matching ---
+  // --- table formatting ---
+  // --- shell quoting ---
+  // --- tmux session name ---
   ```
 
 - **`cs.ts`** — CLI entry point with shebang (imports from lib.ts):

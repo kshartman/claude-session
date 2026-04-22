@@ -10,3 +10,6 @@ dist/
 # mac
 .DS_Store
 ._*
+
+# gstack
+.gstack/
