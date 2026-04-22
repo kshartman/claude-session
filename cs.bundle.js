@@ -28461,7 +28461,7 @@ import { hostname, homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-var VERSION = "1.5.7";
+var VERSION = "1.5.8";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -28734,6 +28734,9 @@ function formatTable(headers, rows, colWidths) {
   const dataLines = rows.map((row) => row.map((cell, i) => padRight(cell, colWidths[i])).join("  "));
   return [headerLine, separator, ...dataLines].join(`
 `);
+}
+function shellQuote(s) {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 function tmuxName(sessionId, title, projectName) {
   if (title) {
@@ -29256,7 +29259,7 @@ async function cmdAttach(config, prefix, host) {
     const check = await tmuxRun("has-session", "-t", tmuxSession);
     if (check.exitCode !== 0) {
       console.log(`Session not running \u2014 starting ${green(tmuxSession)}...`);
-      const create = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", session.project_path, "bash", "-lc", `claude --resume ${session.session_id}`);
+      const create = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", session.project_path, "bash", "-lc", `claude --resume '${session.session_id}'`);
       if (create.exitCode !== 0) {
         console.error(`Failed to create tmux session: ${create.stdout}`);
         process.exit(1);
@@ -29282,6 +29285,9 @@ async function cmdAttach(config, prefix, host) {
     console.log(`Connecting to ${machineColor(session.machine)}...`);
     const agentSock = "$HOME/.ssh/cs-agent.sock";
     const keyTimeout = config.agentKeyTimeout ?? 28800;
+    const qTmux = shellQuote(tmuxSession);
+    const qPath = shellQuote(session.project_path);
+    const qId = shellQuote(session.session_id);
     const ensureScript = [
       `#!/bin/bash`,
       `source ~/.bash_profile 2>/dev/null || source ~/.bashrc 2>/dev/null`,
@@ -29293,12 +29299,12 @@ async function cmdAttach(config, prefix, host) {
       `  rm -f "$AGENT_SOCK" 2>/dev/null`,
       `  eval $(ssh-agent -a "$AGENT_SOCK") >/dev/null 2>&1`,
       `fi`,
-      `if ! tmux has-session -t '${tmuxSession}' 2>/dev/null; then`,
-      `  cd '${session.project_path}' 2>/dev/null`,
-      `  tmux new-session -d -s '${tmuxSession}' -e SSH_AUTH_SOCK="$AGENT_SOCK" 'bash -lc "claude --resume ${session.session_id}"'`,
+      `if ! tmux has-session -t ${qTmux} 2>/dev/null; then`,
+      `  cd ${qPath} 2>/dev/null`,
+      `  tmux new-session -d -s ${qTmux} -e SSH_AUTH_SOCK="$AGENT_SOCK" "bash -lc 'claude --resume ${qId}'"`,
       `  [ -f ~/.tmux.conf ] && tmux source-file ~/.tmux.conf 2>/dev/null`,
       `fi`,
-      `tmux set-environment -t '${tmuxSession}' SSH_AUTH_SOCK "$AGENT_SOCK"`,
+      `tmux set-environment -t ${qTmux} SSH_AUTH_SOCK "$AGENT_SOCK"`,
       `tmux set-environment -g SSH_AUTH_SOCK "$AGENT_SOCK"`,
       `PREFIX=$(tmux show-options -gv prefix 2>/dev/null || echo C-b)`,
       `case "$PREFIX" in`,
@@ -29313,11 +29319,11 @@ async function cmdAttach(config, prefix, host) {
         `BAR="$BAR | scroll: $PFX ["`
       ].join(`
 `) : ``,
-      `tmux set-option -t '${tmuxSession}' window-status-format '' 2>/dev/null`,
-      `tmux set-option -t '${tmuxSession}' window-status-current-format '' 2>/dev/null`,
-      `tmux set-option -t '${tmuxSession}' status-right '' 2>/dev/null`,
-      `tmux set-option -t '${tmuxSession}' status-left-length 120 2>/dev/null`,
-      `tmux set-option -t '${tmuxSession}' status-left " $BAR" 2>/dev/null`
+      `tmux set-option -t ${qTmux} window-status-format '' 2>/dev/null`,
+      `tmux set-option -t ${qTmux} window-status-current-format '' 2>/dev/null`,
+      `tmux set-option -t ${qTmux} status-right '' 2>/dev/null`,
+      `tmux set-option -t ${qTmux} status-left-length 120 2>/dev/null`,
+      `tmux set-option -t ${qTmux} status-left " $BAR" 2>/dev/null`
     ].filter(Boolean).join(`
 `);
     const ensure = Bun.spawn([
@@ -29342,7 +29348,7 @@ async function cmdAttach(config, prefix, host) {
       "-o",
       "ControlPath=none",
       "-t",
-      `export SSH_AUTH_SOCK="${agentSock}"; ` + `export PATH="${config.remotePath}:$PATH"; ` + `if ! ssh-add -l >/dev/null 2>&1; then ` + `  echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."; ` + `  ssh-add -t ${keyTimeout}${config.agentKeyFile ? ` "${config.agentKeyFile.replace(/^~/, "$HOME")}"` : ""}; ` + `fi; ` + `exec tmux attach-session -t '${tmuxSession}'`
+      `export SSH_AUTH_SOCK="${agentSock}"; ` + `export PATH="${config.remotePath}:$PATH"; ` + `if ! ssh-add -l >/dev/null 2>&1; then ` + `  echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."; ` + `  ssh-add -t ${keyTimeout}${config.agentKeyFile ? ` "${config.agentKeyFile.replace(/^~/, "$HOME")}"` : ""}; ` + `fi; ` + `exec tmux attach-session -t ${qTmux}`
     ], {
       stdin: "inherit",
       stdout: "inherit",
@@ -29605,7 +29611,7 @@ async function cmdAdopt(config, prefix, attach) {
     }
   }
   const tmuxSession = tmuxName(session.session_id, session.title, session.project_name);
-  const result = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", session.project_path, "bash", "-lc", `claude --resume ${session.session_id}`);
+  const result = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", session.project_path, "bash", "-lc", `claude --resume '${session.session_id}'`);
   if (result.exitCode !== 0) {
     console.error(`Failed to create tmux session: ${result.stdout}`);
     process.exit(1);
