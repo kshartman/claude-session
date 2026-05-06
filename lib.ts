@@ -33,13 +33,14 @@ export interface CsConfig {
   repoUrl?: string;
   agentKeyTimeout?: number;
   agentKeyFile?: string;
+  hostname?: string;
 }
 
 // --- config ---
 
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
+import { homedir, hostname as osHostname } from "os";
 
 const CONFIG_DIR = join(homedir(), ".config", "cs");
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -86,7 +87,17 @@ export function loadConfig(): CsConfig {
     repoUrl: typeof parsed["repoUrl"] === "string" ? parsed["repoUrl"] : undefined,
     agentKeyTimeout: typeof parsed["agentKeyTimeout"] === "number" ? parsed["agentKeyTimeout"] : 28800,
     agentKeyFile: typeof parsed["agentKeyFile"] === "string" ? parsed["agentKeyFile"] : undefined,
+    hostname: typeof parsed["hostname"] === "string" ? parsed["hostname"] : undefined,
   };
+}
+
+export function getHostname(config: CsConfig): string {
+  return config.hostname ?? osHostname();
+}
+
+export function hostnameVariants(name: string): string[] {
+  const short = name.split(".")[0]!;
+  return short === name ? [] : [short];
 }
 
 export class ConfigError extends Error {

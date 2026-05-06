@@ -271,6 +271,7 @@ Config lives at `~/.config/cs/config.json`:
 | `remotePath` | `$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin` | Extra PATH entries for remote SSH commands (tmux, claude) |
 | `agentKeyTimeout` | `28800` (8h) | How long SSH keys stay loaded in the agent (seconds) |
 | `agentKeyFile` | `~/.ssh/id_ed25519` | Which SSH private key to load into the agent |
+| `hostname` | `os.hostname()` | Override the stored hostname. Use when `os.hostname()` changes (e.g., short name → FQDN) to keep records consistent. Sync auto-migrates old records. |
 | `repoUrl` | GitHub repo URL | Override the base URL for update/install downloads |
 
 ## Multi-machine setup

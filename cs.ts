@@ -4,7 +4,7 @@
 import { MongoClient, type Db, type Collection } from "mongodb";
 import { readdirSync, statSync, existsSync } from "fs";
 import { join, basename } from "path";
-import { hostname, homedir } from "os";
+import { homedir } from "os";
 import {
   type SessionRecord,
   type SessionState,
@@ -22,6 +22,8 @@ import {
   shortId,
   tmuxName,
   shellQuote,
+  getHostname,
+  hostnameVariants,
   relativeTime,
   formatTable,
   bold,
@@ -233,7 +235,7 @@ async function cmdSync(
     return;
   }
 
-  const machine = hostname();
+  const machine = getHostname(config);
   const tmuxSessions = await tmuxListSessions();
 
   // Collect all session records
@@ -359,6 +361,32 @@ async function cmdSync(
         `Synced ${total} sessions (${upserted} new, ${modified} updated)`
       );
     }
+
+    // Migrate records from stale hostname variants (e.g. short name → FQDN)
+    const altNames = hostnameVariants(machine);
+    if (altNames.length > 0) {
+      const stale = await sessions.find({ machine: { $in: altNames } }).toArray();
+      if (stale.length > 0) {
+        const currentIds = new Set(
+          (await sessions.find({ machine }).project({ session_id: 1 }).toArray())
+            .map((r) => r.session_id as string)
+        );
+        let migrated = 0;
+        let deduped = 0;
+        for (const rec of stale) {
+          if (currentIds.has(rec.session_id)) {
+            await sessions.deleteOne({ _id: rec._id });
+            deduped++;
+          } else {
+            await sessions.updateOne({ _id: rec._id }, { $set: { machine } });
+            migrated++;
+          }
+        }
+        if (!quiet && (migrated > 0 || deduped > 0)) {
+          console.log(`Hostname migration: ${migrated} updated, ${deduped} duplicates removed`);
+        }
+      }
+    }
   });
 }
 
@@ -371,7 +399,7 @@ async function isClaudeSession(tmuxSession: string): Promise<boolean> {
 }
 
 async function cmdDashboard(config: CsConfig, sort: SortField | null, showOrphans: boolean): Promise<void> {
-  const machine = hostname();
+  const machine = getHostname(config);
   requireTmux();
 
   // Get live tmux sessions and their states
@@ -477,7 +505,7 @@ async function cmdList(
   await withDb(config, async (_db, sessions) => {
     const filter: Record<string, unknown> = {};
     if (opts.local) {
-      filter["machine"] = hostname();
+      filter["machine"] = getHostname(config);
     } else if (opts.host) {
       // Match full hostname or short name
       filter["machine"] = opts.host.includes(".")
@@ -627,7 +655,7 @@ async function resolveSession(
     if (matches.length > 1) {
       // Prefer local host when ambiguous and no explicit --host
       if (!host) {
-        const local = matches.filter((m) => m.machine.toLowerCase() === hostname().toLowerCase());
+        const local = matches.filter((m) => m.machine.toLowerCase() === getHostname(config).toLowerCase());
         if (local.length === 1) return local[0]!;
       }
 
@@ -698,7 +726,7 @@ async function configureTmuxBar(
   await tmuxRun("set-option", "-t", tmuxSession, "window-status-current-format", "");
   await tmuxRun("set-option", "-t", tmuxSession, "status-right", "");
 
-  const shortHost = hostname().split(".")[0]!;
+  const shortHost = getHostname(config).split(".")[0]!;
   let statusLeft = `[${shortHost}:${tmuxSession}]`;
   if (config.showDetachHint) {
     const prefixResult = await tmuxRun("show-options", "-gv", "prefix");
@@ -738,7 +766,7 @@ async function cmdAttach(
   requireTmux();
   const session = await resolveSession(config, prefix, host);
   const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
-  const machine = hostname();
+  const machine = getHostname(config);
 
   const insideTmux = !!process.env["TMUX"];
 
@@ -920,7 +948,7 @@ async function cmdKill(
     all: boolean;
   }
 ): Promise<void> {
-  const machine = hostname();
+  const machine = getHostname(config);
 
   if (opts.all) {
     // Kill all sessions, optionally filtered by host
@@ -985,7 +1013,7 @@ async function cmdResume(config: CsConfig): Promise<void> {
     process.exit(1);
   }
 
-  const machine = hostname();
+  const machine = getHostname(config);
 
   await withDb(config, async (_db, sessions) => {
     const results = await sessions
@@ -1035,7 +1063,7 @@ async function cmdResume(config: CsConfig): Promise<void> {
 }
 
 async function cmdLast(config: CsConfig): Promise<void> {
-  const machine = hostname();
+  const machine = getHostname(config);
 
   await withDb(config, async (_db, sessions) => {
     const latest = await sessions
@@ -1191,7 +1219,7 @@ async function cmdAdopt(
 ): Promise<void> {
   requireTmux();
   const session = await resolveSession(config, prefix);
-  const machine = hostname();
+  const machine = getHostname(config);
 
   if (session.machine !== machine) {
     console.error(
@@ -1332,7 +1360,7 @@ async function cmdPrune(
   days: number,
   all: boolean
 ): Promise<void> {
-  const machine = hostname();
+  const machine = getHostname(config);
 
   await withDb(config, async (_db, sessions) => {
     const filter: Record<string, unknown> = {
@@ -1377,7 +1405,7 @@ async function cmdDeleted(
   await withDb(config, async (_db, sessions) => {
     const filter: Record<string, unknown> = { deleted_at: { $ne: null } };
     if (opts.local) {
-      filter["machine"] = hostname();
+      filter["machine"] = getHostname(config);
     } else if (opts.host) {
       filter["machine"] = opts.host.includes(".")
         ? { $regex: `^${escapeRegex(opts.host)}$`, $options: "i" }
@@ -1451,7 +1479,7 @@ async function cmdPurge(
   host: string | null,
   deletedOnly: boolean
 ): Promise<void> {
-  const machine = hostname();
+  const machine = getHostname(config);
   const claudeDir = join(homedir(), ".claude", "projects");
 
   await withDb(config, async (_db, sessions) => {
@@ -1660,7 +1688,7 @@ async function cmdAgentStop(
   host: string | null,
   all: boolean
 ): Promise<void> {
-  const machine = hostname();
+  const machine = getHostname(config);
   const agentSock = "$HOME/.ssh/cs-agent.sock";
 
   const stopLocal = () => {
@@ -1863,7 +1891,7 @@ async function cmdUpdateAll(config: CsConfig): Promise<void> {
     return sessions.aggregate(pipeline).toArray();
   });
 
-  const localHost = hostname();
+  const localHost = getHostname(config);
   const remoteHosts = hosts
     .map((h) => h["_id"] as string)
     .filter((h) => h.toLowerCase() !== localHost.toLowerCase());

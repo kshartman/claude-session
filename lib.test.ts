@@ -12,6 +12,7 @@ import {
   redactUri,
   stateColor,
   SCHEMA_VERSION,
+  hostnameVariants,
 } from "./lib";
 
 // --- config ---
@@ -206,6 +207,18 @@ describe("shellQuote", () => {
   });
   test("handles empty string", () => {
     expect(shellQuote("")).toBe("''");
+  });
+});
+
+describe("hostnameVariants", () => {
+  test("returns short name for FQDN", () => {
+    expect(hostnameVariants("ndao.bogometer.com")).toEqual(["ndao"]);
+  });
+  test("returns empty for short name", () => {
+    expect(hostnameVariants("LAKEDEV")).toEqual([]);
+  });
+  test("handles multi-level domain", () => {
+    expect(hostnameVariants("a.b.c.d")).toEqual(["a"]);
   });
 });
 
