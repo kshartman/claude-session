@@ -28455,13 +28455,13 @@ var require_lib3 = __commonJS((exports) => {
 var import_mongodb = __toESM(require_lib3(), 1);
 import { readdirSync, statSync, existsSync as existsSync2 } from "fs";
 import { join as join2, basename } from "path";
-import { hostname, homedir as homedir2 } from "os";
+import { homedir as homedir2 } from "os";
 
 // lib.ts
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
-var VERSION = "1.5.8";
+import { homedir, hostname as osHostname } from "os";
+var VERSION = "1.5.9";
 var SCHEMA_VERSION = 1;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -28501,8 +28501,16 @@ function loadConfig() {
     remotePath: typeof parsed["remotePath"] === "string" ? parsed["remotePath"] : "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin",
     repoUrl: typeof parsed["repoUrl"] === "string" ? parsed["repoUrl"] : undefined,
     agentKeyTimeout: typeof parsed["agentKeyTimeout"] === "number" ? parsed["agentKeyTimeout"] : 28800,
-    agentKeyFile: typeof parsed["agentKeyFile"] === "string" ? parsed["agentKeyFile"] : undefined
+    agentKeyFile: typeof parsed["agentKeyFile"] === "string" ? parsed["agentKeyFile"] : undefined,
+    hostname: typeof parsed["hostname"] === "string" ? parsed["hostname"] : undefined
   };
+}
+function getHostname(config) {
+  return config.hostname ?? osHostname();
+}
+function hostnameVariants(name) {
+  const short = name.split(".")[0];
+  return short === name ? [] : [short];
 }
 
 class ConfigError extends Error {
@@ -28895,7 +28903,7 @@ async function cmdSync(config, quiet) {
       console.log("~/.claude/projects/ not found \u2014 nothing to sync.");
     return;
   }
-  const machine = hostname();
+  const machine = getHostname(config);
   const tmuxSessions = await tmuxListSessions();
   const records = [];
   const projectDirs = readdirSync(claudeDir);
@@ -28994,6 +29002,27 @@ async function cmdSync(config, quiet) {
       const modified = result.modifiedCount;
       console.log(`Synced ${total} sessions (${upserted} new, ${modified} updated)`);
     }
+    const altNames = hostnameVariants(machine);
+    if (altNames.length > 0) {
+      const stale = await sessions.find({ machine: { $in: altNames } }).toArray();
+      if (stale.length > 0) {
+        const currentIds = new Set((await sessions.find({ machine }).project({ session_id: 1 }).toArray()).map((r) => r.session_id));
+        let migrated = 0;
+        let deduped = 0;
+        for (const rec of stale) {
+          if (currentIds.has(rec.session_id)) {
+            await sessions.deleteOne({ _id: rec._id });
+            deduped++;
+          } else {
+            await sessions.updateOne({ _id: rec._id }, { $set: { machine } });
+            migrated++;
+          }
+        }
+        if (!quiet && (migrated > 0 || deduped > 0)) {
+          console.log(`Hostname migration: ${migrated} updated, ${deduped} duplicates removed`);
+        }
+      }
+    }
   });
 }
 async function isClaudeSession(tmuxSession) {
@@ -29004,7 +29033,7 @@ async function isClaudeSession(tmuxSession) {
 `).some((cmd) => cmd.trim() === "claude");
 }
 async function cmdDashboard(config, sort, showOrphans) {
-  const machine = hostname();
+  const machine = getHostname(config);
   requireTmux();
   const tmuxSessions = await tmuxListSessions();
   const liveStates = new Map;
@@ -29083,7 +29112,7 @@ async function cmdList(config, opts) {
   await withDb(config, async (_db, sessions) => {
     const filter = {};
     if (opts.local) {
-      filter["machine"] = hostname();
+      filter["machine"] = getHostname(config);
     } else if (opts.host) {
       filter["machine"] = opts.host.includes(".") ? { $regex: `^${escapeRegex(opts.host)}$`, $options: "i" } : { $regex: `^${escapeRegex(opts.host)}(\\.|$)`, $options: "i" };
     }
@@ -29165,7 +29194,7 @@ async function resolveSession(config, prefix, host) {
     }
     if (matches.length > 1) {
       if (!host) {
-        const local = matches.filter((m) => m.machine.toLowerCase() === hostname().toLowerCase());
+        const local = matches.filter((m) => m.machine.toLowerCase() === getHostname(config).toLowerCase());
         if (local.length === 1)
           return local[0];
       }
@@ -29219,7 +29248,7 @@ async function configureTmuxBar(config, tmuxSession) {
   await tmuxRun("set-option", "-t", tmuxSession, "window-status-format", "");
   await tmuxRun("set-option", "-t", tmuxSession, "window-status-current-format", "");
   await tmuxRun("set-option", "-t", tmuxSession, "status-right", "");
-  const shortHost = hostname().split(".")[0];
+  const shortHost = getHostname(config).split(".")[0];
   let statusLeft = `[${shortHost}:${tmuxSession}]`;
   if (config.showDetachHint) {
     const prefixResult = await tmuxRun("show-options", "-gv", "prefix");
@@ -29253,7 +29282,7 @@ async function cmdAttach(config, prefix, host) {
   requireTmux();
   const session = await resolveSession(config, prefix, host);
   const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
-  const machine = hostname();
+  const machine = getHostname(config);
   const insideTmux = !!process.env["TMUX"];
   if (session.machine.toLowerCase() === machine.toLowerCase()) {
     const check = await tmuxRun("has-session", "-t", tmuxSession);
@@ -29398,7 +29427,7 @@ async function killOneSession(session, machine, sessionsCol) {
   return ok;
 }
 async function cmdKill(config, opts) {
-  const machine = hostname();
+  const machine = getHostname(config);
   if (opts.all) {
     await withDb(config, async (_db, sessions) => {
       const filter = { deleted_at: null };
@@ -29451,7 +29480,7 @@ async function cmdResume(config) {
 Install it with: sudo apt install fzf`);
     process.exit(1);
   }
-  const machine = hostname();
+  const machine = getHostname(config);
   await withDb(config, async (_db, sessions) => {
     const results = await sessions.find({ machine, deleted_at: null }).sort({ updated_at: -1 }).limit(50).toArray();
     if (results.length === 0) {
@@ -29484,7 +29513,7 @@ Install it with: sudo apt install fzf`);
   });
 }
 async function cmdLast(config) {
-  const machine = hostname();
+  const machine = getHostname(config);
   await withDb(config, async (_db, sessions) => {
     const latest = await sessions.find({ machine, deleted_at: null }).sort({ updated_at: -1 }).limit(1).toArray();
     if (latest.length === 0) {
@@ -29593,7 +29622,7 @@ async function cmdHosts(config) {
 async function cmdAdopt(config, prefix, attach) {
   requireTmux();
   const session = await resolveSession(config, prefix);
-  const machine = hostname();
+  const machine = getHostname(config);
   if (session.machine !== machine) {
     console.error(`Session ${shortId(session.session_id)} is on ${session.machine}, not this machine.
 ` + `You can only adopt local sessions.`);
@@ -29678,7 +29707,7 @@ async function cmdRm(config, prefix, undo) {
   });
 }
 async function cmdPrune(config, days, all) {
-  const machine = hostname();
+  const machine = getHostname(config);
   await withDb(config, async (_db, sessions) => {
     const filter = {
       machine,
@@ -29704,7 +29733,7 @@ async function cmdDeleted(config, opts) {
   await withDb(config, async (_db, sessions) => {
     const filter = { deleted_at: { $ne: null } };
     if (opts.local) {
-      filter["machine"] = hostname();
+      filter["machine"] = getHostname(config);
     } else if (opts.host) {
       filter["machine"] = opts.host.includes(".") ? { $regex: `^${escapeRegex(opts.host)}$`, $options: "i" } : { $regex: `^${escapeRegex(opts.host)}(\\.|$)`, $options: "i" };
     }
@@ -29752,7 +29781,7 @@ function purgeOneSession(session, claudeDir) {
   return { jsonlPath, sessionDir, deleted };
 }
 async function cmdPurge(config, pattern, confirm, all, host, deletedOnly) {
-  const machine = hostname();
+  const machine = getHostname(config);
   const claudeDir = join2(homedir2(), ".claude", "projects");
   await withDb(config, async (_db, sessions) => {
     const hostFilter = {};
@@ -29912,7 +29941,7 @@ Soft-deleted ${yellow(String(deleted))} session(s). Use ${bold("cs deleted")} to
 }
 var DEFAULT_REPO_URL = "https://raw.githubusercontent.com/kshartman/claude-session/main";
 async function cmdAgentStop(config, host, all) {
-  const machine = hostname();
+  const machine = getHostname(config);
   const agentSock = "$HOME/.ssh/cs-agent.sock";
   const stopLocal = () => {
     const sock = join2(homedir2(), ".ssh", "cs-agent.sock");
@@ -30089,7 +30118,7 @@ async function cmdUpdateAll(config) {
     ];
     return sessions.aggregate(pipeline).toArray();
   });
-  const localHost = hostname();
+  const localHost = getHostname(config);
   const remoteHosts = hosts.map((h) => h["_id"]).filter((h) => h.toLowerCase() !== localHost.toLowerCase());
   if (remoteHosts.length === 0) {
     console.log(`
