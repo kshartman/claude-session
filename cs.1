@@ -174,14 +174,21 @@ directories. Without
 .BR --yes ,
 shows what would be deleted. With
 .BR --all ,
-bulk deletes matching sessions (requires typed YES confirmation). With
+bulk deletes matching sessions (requires typed YES confirmation). Bulk
+.BR --all
+mode skips live
+.B /rename
+d or tagged sessions unless they have already been soft-deleted; target such a
+session explicitly to purge it. With
 .BR --deleted ,
 targets only soft-deleted sessions. Must be run on the host where sessions live.
 This is irreversible.
 .TP
 .BI "cs info" " id-or-name"
 Display the full record for a single session, including session ID, machine,
-project path, title, tag, state, message count, timestamps, tmux session name,
+project path, title,
+.B /rename
+name (if any), tag, state, message count, timestamps, tmux session name,
 summary, and schema version.
 .TP
 .B cs hosts

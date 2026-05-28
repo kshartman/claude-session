@@ -1,8 +1,9 @@
 // --- types ---
 
-// VERSION is set here and in the VERSION file — keep in sync when releasing
-export const VERSION = "1.5.9";
-export const SCHEMA_VERSION = 1;
+// VERSION is canonical in the VERSION file; `bun run build` syncs this constant
+// via scripts/sync-version.ts. Edit the VERSION file, not this line.
+export const VERSION = "1.6.0";
+export const SCHEMA_VERSION = 2;
 
 export type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";
 
@@ -16,6 +17,7 @@ export interface SessionRecord {
   updated_at: Date;
   message_count: number;
   title: string | null;
+  agent_name: string | null;
   tag: string | null;
   state: SessionState | null;
   tmux_session: string | null;
@@ -224,6 +226,12 @@ export function decodePathHash(hash: string): string {
   return hash.replace(/^-/, "/").replace(/-/g, "/");
 }
 
+export function encodePathHash(projectPath: string): string {
+  // Inverse of Claude's encoding: drop the leading "/", then "/" and "." → "-".
+  // Lossy (real hyphens are indistinguishable) — decode validates against disk.
+  return `-${projectPath.slice(1).replace(/[/.]/g, "-")}`;
+}
+
 export function findValidProjectPath(hash: string): string | null {
   const naive = decodePathHash(hash);
   if (existsSync(naive)) return naive;
@@ -245,10 +253,14 @@ function tryReconstruct(
 
   const seg = segments[idx]!;
 
-  // Try appending as a new path segment
-  const asSegment = current ? `${current}/${seg}` : `/${seg}`;
-  const result1 = tryReconstruct(segments, idx + 1, asSegment);
-  if (result1) return result1;
+  // Try appending as a new path segment. A valid full path implies every parent
+  // directory exists, so prune this branch when `current` (the parent) doesn't —
+  // this collapses the worst-case O(3^n) search and never drops a real solution.
+  if (!current || existsSync(current)) {
+    const asSegment = current ? `${current}/${seg}` : `/${seg}`;
+    const result1 = tryReconstruct(segments, idx + 1, asSegment);
+    if (result1) return result1;
+  }
 
   // Try joining with previous segment via "." (e.g., example.com)
   if (current) {
@@ -279,16 +291,13 @@ export interface JsonlParseResult {
 export async function parseSessionJsonl(
   filePath: string
 ): Promise<JsonlParseResult> {
-  const file = Bun.file(filePath);
-  const text = await file.text();
-  const lines = text.split("\n").filter((l) => l.trim().length > 0);
-
   let messageCount = 0;
   let title: string | null = null;
   let sessionName: string | null = null;
   let startedAt: Date | null = null;
 
-  for (const line of lines) {
+  const processLine = (line: string): void => {
+    if (line.trim().length === 0) return;
     try {
       const obj = JSON.parse(line) as Record<string, unknown>;
 
@@ -337,9 +346,32 @@ export async function parseSessionJsonl(
       }
     } catch {
       // Malformed line — skip silently
-      continue;
     }
+  };
+
+  // Stream line-by-line to keep peak memory low on large sessions (thousands
+  // of messages). The final buffer chunk may be a partial tail line written
+  // mid-race; processLine skips it if it fails to parse.
+  const reader = Bun.file(filePath).stream().getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl = buffer.indexOf("\n");
+      while (nl >= 0) {
+        processLine(buffer.slice(0, nl));
+        buffer = buffer.slice(nl + 1);
+        nl = buffer.indexOf("\n");
+      }
+    }
+  } finally {
+    reader.releaseLock();
   }
+  buffer += decoder.decode();
+  processLine(buffer);
 
   return { messageCount, title, sessionName, startedAt };
 }
@@ -466,4 +498,68 @@ export function tmuxName(
     return `${projectName}-${shortId(sessionId)}`;
   }
   return shortId(sessionId);
+}
+
+// --- mongo filters ---
+
+export function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// A session the user kept on purpose is one they named (/rename → agent_name)
+// or tagged. Bulk operations (prune, purge --all) must never silently destroy
+// these while live; they leave only by explicit single-target command or after
+// being soft-deleted. These two clauses match the *absence* of those signals.
+const NOT_NAMED = { $or: [{ agent_name: null }, { agent_name: { $exists: false } }] };
+const NOT_TAGGED = { $or: [{ tag: null }, { tag: { $exists: false } }] };
+
+// Selects sessions `cs prune` may soft-delete on `machine`: not soft-deleted,
+// not named, not tagged, and (unless `all`) older than `days`.
+export function pruneFilter(
+  machine: string,
+  opts: { days: number; all: boolean }
+): Record<string, unknown> {
+  const filter: Record<string, unknown> = {
+    machine,
+    deleted_at: null,
+    $and: [NOT_TAGGED, NOT_NAMED],
+  };
+  if (!opts.all) {
+    filter["updated_at"] = {
+      $lt: new Date(Date.now() - opts.days * 24 * 60 * 60 * 1000),
+    };
+  }
+  return filter;
+}
+
+// Selects sessions `cs purge --all` may hard-delete: matching `pattern` (or all
+// when "*"), optionally on `host` / only `deletedOnly`, and — the guard — never
+// a live named/tagged session unless it has already been soft-deleted.
+export function purgeBulkFilter(
+  pattern: string,
+  opts: { host?: string | null; deletedOnly: boolean }
+): Record<string, unknown> {
+  const conditions: Record<string, unknown>[] = [];
+  if (pattern !== "*") {
+    conditions.push({
+      $or: [
+        { session_id: { $regex: `^${escapeRegex(pattern)}` } },
+        { title: { $regex: escapeRegex(pattern), $options: "i" } },
+        { project_name: { $regex: escapeRegex(pattern), $options: "i" } },
+      ],
+    });
+  }
+  conditions.push({
+    $or: [{ deleted_at: { $ne: null } }, { $and: [NOT_NAMED, NOT_TAGGED] }],
+  });
+
+  const query: Record<string, unknown> = {};
+  if (opts.host) {
+    query["machine"] = opts.host.includes(".")
+      ? { $regex: `^${escapeRegex(opts.host)}$`, $options: "i" }
+      : { $regex: `^${escapeRegex(opts.host)}(\\.|$)`, $options: "i" };
+  }
+  if (opts.deletedOnly) query["deleted_at"] = { $ne: null };
+  query["$and"] = conditions;
+  return query;
 }

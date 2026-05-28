@@ -1,6 +1,14 @@
 import { describe, test, expect } from "bun:test";
+import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
   decodePathHash,
+  encodePathHash,
+  parseSessionJsonl,
+  pruneFilter,
+  purgeBulkFilter,
+  escapeRegex,
   detectState,
   matchPrefix,
   shortId,
@@ -40,6 +48,76 @@ describe("decodePathHash", () => {
 
   test("returns non-prefixed strings as-is", () => {
     expect(decodePathHash("some-other-thing")).toBe("some-other-thing");
+  });
+});
+
+describe("encodePathHash", () => {
+  test("encodes a simple path", () => {
+    expect(encodePathHash("/home/user/projects/myapp")).toBe(
+      "-home-user-projects-myapp"
+    );
+  });
+
+  test("round-trips with decodePathHash for hyphen-free paths", () => {
+    const p = "/home/user/projects/myapp";
+    expect(decodePathHash(encodePathHash(p))).toBe(p);
+  });
+
+  test("collapses dots to hyphens (lossy, like Claude's encoding)", () => {
+    expect(encodePathHash("/home/user/example.com")).toBe(
+      "-home-user-example-com"
+    );
+  });
+});
+
+// --- jsonl parsing ---
+
+describe("parseSessionJsonl", () => {
+  test("counts messages and extracts title, sessionName, earliest timestamp", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cs-test-"));
+    const file = join(dir, "s.jsonl");
+    try {
+      const lines = [
+        JSON.stringify({ type: "user", message: { content: "first human message" }, timestamp: "2026-01-02T00:00:00Z" }),
+        JSON.stringify({ type: "assistant", message: { content: "hi" }, timestamp: "2026-01-01T00:00:00Z" }),
+        JSON.stringify({ type: "user", agentName: "my-renamed", message: { content: "second" }, timestamp: "2026-01-03T00:00:00Z" }),
+        JSON.stringify({ type: "summary" }),
+        "{ this line is malformed",
+      ];
+      writeFileSync(file, lines.join("\n") + "\n");
+      const r = await parseSessionJsonl(file);
+      expect(r.messageCount).toBe(3); // 2 user + 1 assistant; summary/malformed skipped
+      expect(r.title).toBe("first human message");
+      expect(r.sessionName).toBe("my-renamed");
+      expect(r.startedAt?.toISOString()).toBe("2026-01-01T00:00:00.000Z");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  test("extracts title from array-of-blocks content", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cs-test-"));
+    const file = join(dir, "s.jsonl");
+    try {
+      writeFileSync(file, JSON.stringify({ type: "user", message: { content: [{ type: "text", text: "blocky title" }] } }) + "\n");
+      const r = await parseSessionJsonl(file);
+      expect(r.title).toBe("blocky title");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  test("skips a malformed partial tail line with no trailing newline", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cs-test-"));
+    const file = join(dir, "s.jsonl");
+    try {
+      writeFileSync(file, JSON.stringify({ type: "user", message: { content: "ok" } }) + '\n{"type":"user","mess');
+      const r = await parseSessionJsonl(file);
+      expect(r.messageCount).toBe(1);
+      expect(r.title).toBe("ok");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
   });
 });
 
@@ -185,11 +263,72 @@ describe("formatTable", () => {
   });
 });
 
+// --- mongo filters ---
+
+describe("pruneFilter", () => {
+  test("scopes to machine, live only, and excludes named + tagged", () => {
+    const f = pruneFilter("host1", { days: 30, all: true });
+    expect(f["machine"]).toBe("host1");
+    expect(f["deleted_at"]).toBeNull();
+    expect(f["$and"]).toEqual([
+      { $or: [{ tag: null }, { tag: { $exists: false } }] },
+      { $or: [{ agent_name: null }, { agent_name: { $exists: false } }] },
+    ]);
+  });
+
+  test("--all ignores the age cutoff", () => {
+    expect(pruneFilter("h", { days: 30, all: true })["updated_at"]).toBeUndefined();
+  });
+
+  test("applies an age cutoff when not --all", () => {
+    const f = pruneFilter("h", { days: 7, all: false });
+    expect(f["updated_at"]).toHaveProperty("$lt");
+  });
+});
+
+describe("purgeBulkFilter", () => {
+  test("wildcard purge only carries the keep-guard clause", () => {
+    const f = purgeBulkFilter("*", { deletedOnly: false });
+    const and = f["$and"] as Record<string, unknown>[];
+    expect(and).toHaveLength(1);
+    // guard: already-trashed OR (not named AND not tagged)
+    expect(and[0]).toEqual({
+      $or: [
+        { deleted_at: { $ne: null } },
+        {
+          $and: [
+            { $or: [{ agent_name: null }, { agent_name: { $exists: false } }] },
+            { $or: [{ tag: null }, { tag: { $exists: false } }] },
+          ],
+        },
+      ],
+    });
+    expect(f["machine"]).toBeUndefined();
+  });
+
+  test("non-wildcard adds a pattern clause alongside the guard", () => {
+    const and = purgeBulkFilter("foo", { deletedOnly: false })["$and"] as Record<string, unknown>[];
+    expect(and).toHaveLength(2);
+  });
+
+  test("host and --deleted scope the query", () => {
+    const f = purgeBulkFilter("*", { host: "ndao.example.com", deletedOnly: true });
+    expect(f["machine"]).toHaveProperty("$regex");
+    expect(f["deleted_at"]).toEqual({ $ne: null });
+  });
+});
+
+describe("escapeRegex", () => {
+  test("escapes regex metacharacters", () => {
+    expect(escapeRegex("a.b*c")).toBe("a\\.b\\*c");
+  });
+});
+
 // --- schema version ---
 
 describe("schema", () => {
-  test("SCHEMA_VERSION is 1", () => {
-    expect(SCHEMA_VERSION).toBe(1);
+  test("SCHEMA_VERSION is 2", () => {
+    expect(SCHEMA_VERSION).toBe(2);
   });
 });
 

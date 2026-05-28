@@ -2,7 +2,16 @@
 // cs — Claude Session Manager
 
 import { MongoClient, type Db, type Collection } from "mongodb";
-import { readdirSync, statSync, existsSync } from "fs";
+import {
+  readdirSync,
+  statSync,
+  existsSync,
+  rmSync,
+  writeFileSync,
+  mkdirSync,
+  chmodSync,
+  readSync,
+} from "fs";
 import { join, basename } from "path";
 import { homedir } from "os";
 import {
@@ -17,6 +26,10 @@ import {
   parseSessionJsonl,
   readSummary,
   findValidProjectPath,
+  encodePathHash,
+  escapeRegex,
+  pruneFilter,
+  purgeBulkFilter,
   detectState,
   matchPrefix,
   shortId,
@@ -301,6 +314,7 @@ async function cmdSync(
           updated_at: fileStat.mtime,
           message_count: parsed.messageCount,
           title: parsed.sessionName ?? parsed.title,
+          agent_name: parsed.sessionName,
           tag: null,
           state,
           tmux_session: tmuxInfo ? tmuxSessionName : null,
@@ -569,9 +583,11 @@ async function cmdLaunch(
 ): Promise<void> {
   requireTmux();
 
-  const claudeArgs = ["claude"];
+  // Build the claude command, quoting the prompt so it survives `bash -lc`
+  // intact — prevents word-splitting and shell injection from the prompt text.
+  let claudeCmd = "claude";
   if (prompt) {
-    claudeArgs.push("-p", prompt);
+    claudeCmd += ` -p ${shellQuote(prompt)}`;
   }
 
   // Resolve project directory
@@ -588,7 +604,7 @@ async function cmdLaunch(
     tmuxSession,
     "-c",
     targetDir,
-    "bash", "-lc", claudeArgs.join(" ")
+    "bash", "-lc", claudeCmd
   );
 
   if (result.exitCode !== 0) {
@@ -670,10 +686,6 @@ async function resolveSession(
 
     return matches[0]!;
   });
-}
-
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 
@@ -956,7 +968,7 @@ async function cmdKill(
       const filter: Record<string, unknown> = { deleted_at: null };
       if (opts.host) {
         filter["machine"] = opts.host.includes(".")
-          ? opts.host
+          ? { $regex: `^${escapeRegex(opts.host)}$`, $options: "i" }
           : { $regex: `^${escapeRegex(opts.host)}(\\.|\$)`, $options: "i" };
       }
       // Only kill sessions that have tmux sessions
@@ -1167,6 +1179,7 @@ async function cmdInfo(
   console.log(`  Host:      ${machineColor(config.listFQDN ? session.machine : session.machine.split(".")[0]!)}`);
   console.log(`  Project:   ${session.project_path}`);
   console.log(`  Title:     ${session.title ?? dim("(no title)")}`);
+  if (session.agent_name) console.log(`  Renamed:   ${green(session.agent_name)}`);
   console.log(`  Tag:       ${session.tag ?? dim("(none)")}`);
   console.log(`  State:     ${stateColor(session.state)}`);
   console.log(`  Messages:  ${session.message_count}`);
@@ -1205,7 +1218,7 @@ async function cmdHosts(config: CsConfig): Promise<void> {
     const rows = results.map((r) => [
       machineColor(config.listFQDN ? (r["_id"] as string) : (r["_id"] as string).split(".")[0]!),
       String(r["count"]),
-      relativeTime(new Date(r["last_seen"] as string)),
+      relativeTime(new Date(r["last_seen"] as Date)),
     ]);
 
     console.log(formatTable(headers, rows, colWidths));
@@ -1363,26 +1376,11 @@ async function cmdPrune(
   const machine = getHostname(config);
 
   await withDb(config, async (_db, sessions) => {
-    const filter: Record<string, unknown> = {
-      machine,
-      deleted_at: null,
-      // Keep anything with a /rename name or tag
-      $and: [
-        { $or: [{ tag: null }, { tag: { $exists: false } }] },
-      ],
-    };
-
-    if (!all) {
-      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-      filter["updated_at"] = { $lt: cutoff };
-    }
-
-    // Find candidates — exclude sessions whose title looks intentional (set via /rename)
-    const candidates = await sessions.find(filter).toArray();
-
-    // Filter out sessions that were /renamed (title != first message pattern)
-    // We can't perfectly distinguish, but tagged sessions are already excluded
-    // For now, prune anything unnamed+untagged matching the age filter
+    // pruneFilter excludes anything named or tagged; candidates are the
+    // unnamed + untagged sessions matching the age filter.
+    const candidates = await sessions
+      .find(pruneFilter(machine, { days, all }))
+      .toArray();
 
     if (candidates.length === 0) {
       console.log("Nothing to prune.");
@@ -1446,12 +1444,11 @@ function purgeOneSession(
   session: SessionRecord,
   claudeDir: string
 ): { jsonlPath: string; sessionDir: string; deleted: string[] } {
-  const pathHash = `-${session.project_path.slice(1).replace(/[/.]/g, "-")}`;
+  const pathHash = encodePathHash(session.project_path);
   const jsonlPath = join(claudeDir, pathHash, `${session.session_id}.jsonl`);
   const sessionDir = join(claudeDir, pathHash, session.session_id);
   const deleted: string[] = [];
 
-  const { rmSync } = require("fs") as typeof import("fs");
   if (existsSync(jsonlPath)) {
     rmSync(jsonlPath);
     deleted.push(jsonlPath);
@@ -1483,34 +1480,15 @@ async function cmdPurge(
   const claudeDir = join(homedir(), ".claude", "projects");
 
   await withDb(config, async (_db, sessions) => {
-    // Build host filter
-    const hostFilter: Record<string, unknown> = {};
-    if (host) {
-      hostFilter["machine"] = host.includes(".")
-        ? { $regex: `^${escapeRegex(host)}$`, $options: "i" }
-        : { $regex: `^${escapeRegex(host)}(\\.|\$)`, $options: "i" };
-    }
-
-    // Deleted filter
-    const delFilter: Record<string, unknown> = deletedOnly
-      ? { deleted_at: { $ne: null } }
-      : {};
-
     // Find matching sessions
     let matches: SessionRecord[];
 
     if (all) {
-      // Bulk mode: match pattern against session_id prefix, title, or project name
-      const baseFilter = { ...hostFilter, ...delFilter };
-      const matchFilter = pattern === "*" ? {} : {
-        $or: [
-          { session_id: { $regex: `^${escapeRegex(pattern)}` } },
-          { title: { $regex: escapeRegex(pattern), $options: "i" } },
-          { project_name: { $regex: escapeRegex(pattern), $options: "i" } },
-        ],
-      };
+      // Bulk mode: purgeBulkFilter matches the pattern but guards live
+      // named/tagged sessions — a wildcard can only reach them once they've
+      // been soft-deleted into the trash.
       matches = await sessions
-        .find({ ...baseFilter, ...matchFilter })
+        .find(purgeBulkFilter(pattern, { host, deletedOnly }))
         .toArray();
     } else {
       // Single mode: exact resolve
@@ -1564,7 +1542,7 @@ async function cmdPurge(
     // Show what will be purged
     console.log(`${all ? "Bulk purge" : "Purge"} ${matches.length} session(s) matching '${pattern}':\n`);
     for (const s of matches) {
-      const pathHash = `-${s.project_path.slice(1).replace(/[/.]/g, "-")}`;
+      const pathHash = encodePathHash(s.project_path);
       const jsonlPath = join(claudeDir, pathHash, `${s.session_id}.jsonl`);
       const local = s.machine.toLowerCase() === machine.toLowerCase();
       console.log(`  ${s.project_name}  ${s.session_id.slice(0, 14)}  ${s.machine}  ${s.title ?? "(no title)"}  ${local && existsSync(jsonlPath) ? "files: yes" : dim("files: no")}`);
@@ -1581,9 +1559,15 @@ async function cmdPurge(
     // Bulk: demand typed confirmation
     if (all && matches.length > 1) {
       process.stdout.write(`\nType YES to permanently delete ${matches.length} sessions: `);
-      const buf = Buffer.alloc(10);
-      const n = require("fs").readSync(0, buf, 0, 10);
-      const answer = buf.subarray(0, n).toString().trim();
+      let answer: string;
+      try {
+        const buf = Buffer.alloc(10);
+        const n = readSync(0, buf, 0, 10, null);
+        answer = buf.subarray(0, n).toString().trim();
+      } catch {
+        console.log("\nAborted (no input available).");
+        return;
+      }
       if (answer !== "YES") {
         console.log("Aborted.");
         return;
@@ -1798,7 +1782,6 @@ function ensureCron(): void {
 </plist>`;
 
       try {
-        const { writeFileSync, mkdirSync } = require("fs") as typeof import("fs");
         mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
         writeFileSync(plistPath, plist);
         Bun.spawnSync(["launchctl", "load", plistPath]);
@@ -1855,7 +1838,6 @@ async function cmdUpdate(force = false): Promise<void> {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const content = await resp.text();
     await Bun.write(binPath, content);
-    const { chmodSync } = await import("fs");
     chmodSync(binPath, 0o755);
   } catch (err) {
     console.error(`Failed to download bundle: ${err}`);
@@ -1867,7 +1849,6 @@ async function cmdUpdate(force = false): Promise<void> {
   try {
     const resp = await fetch(`${getBaseUrl()}/cs.1`);
     if (resp.ok) {
-      const { mkdirSync } = await import("fs");
       mkdirSync(`${homedir()}/.local/share/man/man1`, { recursive: true });
       await Bun.write(manPath, await resp.text());
     }
@@ -1961,7 +1942,7 @@ ${bold("Usage:")}
   cs gc --yes                     Soft-delete the duplicates
   cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
   cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
-                                  Bulk hard delete matching sessions
+                                  Bulk hard delete (skips live named/tagged sessions)
   cs agent stop [--host] [--all]  Stop SSH agent on host(s)
   cs update                       Update cs to latest version
   cs update --all                 Update cs on all known hosts via SSH

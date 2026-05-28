@@ -28453,7 +28453,16 @@ var require_lib3 = __commonJS((exports) => {
 
 // cs.ts
 var import_mongodb = __toESM(require_lib3(), 1);
-import { readdirSync, statSync, existsSync as existsSync2 } from "fs";
+import {
+  readdirSync,
+  statSync,
+  existsSync as existsSync2,
+  rmSync,
+  writeFileSync,
+  mkdirSync,
+  chmodSync,
+  readSync
+} from "fs";
 import { join as join2, basename } from "path";
 import { homedir as homedir2 } from "os";
 
@@ -28461,8 +28470,8 @@ import { homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.5.9";
-var SCHEMA_VERSION = 1;
+var VERSION = "1.6.0";
+var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
 function loadConfig() {
@@ -28615,6 +28624,9 @@ function decodePathHash(hash) {
     return hash;
   return hash.replace(/^-/, "/").replace(/-/g, "/");
 }
+function encodePathHash(projectPath) {
+  return `-${projectPath.slice(1).replace(/[/.]/g, "-")}`;
+}
 function findValidProjectPath(hash) {
   const naive = decodePathHash(hash);
   if (existsSync(naive))
@@ -28627,10 +28639,12 @@ function tryReconstruct(segments, idx, current) {
     return current && existsSync(current) ? current : null;
   }
   const seg = segments[idx];
-  const asSegment = current ? `${current}/${seg}` : `/${seg}`;
-  const result1 = tryReconstruct(segments, idx + 1, asSegment);
-  if (result1)
-    return result1;
+  if (!current || existsSync(current)) {
+    const asSegment = current ? `${current}/${seg}` : `/${seg}`;
+    const result1 = tryReconstruct(segments, idx + 1, asSegment);
+    if (result1)
+      return result1;
+  }
   if (current) {
     const asDot = `${current}.${seg}`;
     const result2 = tryReconstruct(segments, idx + 1, asDot);
@@ -28646,15 +28660,13 @@ function tryReconstruct(segments, idx, current) {
   return null;
 }
 async function parseSessionJsonl(filePath) {
-  const file = Bun.file(filePath);
-  const text = await file.text();
-  const lines = text.split(`
-`).filter((l) => l.trim().length > 0);
   let messageCount = 0;
   let title = null;
   let sessionName = null;
   let startedAt = null;
-  for (const line of lines) {
+  const processLine = (line) => {
+    if (line.trim().length === 0)
+      return;
     try {
       const obj = JSON.parse(line);
       if (obj["type"] === "user" || obj["type"] === "assistant") {
@@ -28685,10 +28697,31 @@ async function parseSessionJsonl(filePath) {
           startedAt = ts;
         }
       }
-    } catch {
-      continue;
+    } catch {}
+  };
+  const reader = Bun.file(filePath).stream().getReader();
+  const decoder = new TextDecoder;
+  let buffer = "";
+  try {
+    for (;; ) {
+      const { done, value } = await reader.read();
+      if (done)
+        break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl = buffer.indexOf(`
+`);
+      while (nl >= 0) {
+        processLine(buffer.slice(0, nl));
+        buffer = buffer.slice(nl + 1);
+        nl = buffer.indexOf(`
+`);
+      }
     }
+  } finally {
+    reader.releaseLock();
   }
+  buffer += decoder.decode();
+  processLine(buffer);
   return { messageCount, title, sessionName, startedAt };
 }
 async function readSummary(projectDir, sessionId) {
@@ -28754,6 +28787,47 @@ function tmuxName(sessionId, title, projectName) {
     return `${projectName}-${shortId(sessionId)}`;
   }
   return shortId(sessionId);
+}
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+var NOT_NAMED = { $or: [{ agent_name: null }, { agent_name: { $exists: false } }] };
+var NOT_TAGGED = { $or: [{ tag: null }, { tag: { $exists: false } }] };
+function pruneFilter(machine, opts) {
+  const filter = {
+    machine,
+    deleted_at: null,
+    $and: [NOT_TAGGED, NOT_NAMED]
+  };
+  if (!opts.all) {
+    filter["updated_at"] = {
+      $lt: new Date(Date.now() - opts.days * 24 * 60 * 60 * 1000)
+    };
+  }
+  return filter;
+}
+function purgeBulkFilter(pattern, opts) {
+  const conditions = [];
+  if (pattern !== "*") {
+    conditions.push({
+      $or: [
+        { session_id: { $regex: `^${escapeRegex(pattern)}` } },
+        { title: { $regex: escapeRegex(pattern), $options: "i" } },
+        { project_name: { $regex: escapeRegex(pattern), $options: "i" } }
+      ]
+    });
+  }
+  conditions.push({
+    $or: [{ deleted_at: { $ne: null } }, { $and: [NOT_NAMED, NOT_TAGGED] }]
+  });
+  const query = {};
+  if (opts.host) {
+    query["machine"] = opts.host.includes(".") ? { $regex: `^${escapeRegex(opts.host)}$`, $options: "i" } : { $regex: `^${escapeRegex(opts.host)}(\\.|$)`, $options: "i" };
+  }
+  if (opts.deletedOnly)
+    query["deleted_at"] = { $ne: null };
+  query["$and"] = conditions;
+  return query;
 }
 
 // cs.ts
@@ -28955,6 +29029,7 @@ async function cmdSync(config, quiet) {
           updated_at: fileStat.mtime,
           message_count: parsed.messageCount,
           title: parsed.sessionName ?? parsed.title,
+          agent_name: parsed.sessionName,
           tag: null,
           state,
           tmux_session: tmuxInfo ? tmuxSessionName : null,
@@ -29154,14 +29229,14 @@ async function cmdList(config, opts) {
 }
 async function cmdLaunch(_config, project, prompt) {
   requireTmux();
-  const claudeArgs = ["claude"];
+  let claudeCmd = "claude";
   if (prompt) {
-    claudeArgs.push("-p", prompt);
+    claudeCmd += ` -p ${shellQuote(prompt)}`;
   }
   const abs = project.startsWith("/") ? project : join2(process.cwd(), project);
   const targetDir = existsSync2(abs) ? abs : process.cwd();
   const tmuxSession = `cs-${basename(targetDir).slice(0, 20)}-${Date.now().toString(36)}`;
-  const result = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", targetDir, "bash", "-lc", claudeArgs.join(" "));
+  const result = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", targetDir, "bash", "-lc", claudeCmd);
   if (result.exitCode !== 0) {
     console.error(`Failed to create tmux session: ${result.stdout}`);
     process.exit(1);
@@ -29206,9 +29281,6 @@ async function resolveSession(config, prefix, host) {
     }
     return matches[0];
   });
-}
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 async function ensureLocalAgent(config, tmuxSession) {
   const agentSock = join2(homedir2(), ".ssh", "cs-agent.sock");
@@ -29432,7 +29504,7 @@ async function cmdKill(config, opts) {
     await withDb(config, async (_db, sessions) => {
       const filter = { deleted_at: null };
       if (opts.host) {
-        filter["machine"] = opts.host.includes(".") ? opts.host : { $regex: `^${escapeRegex(opts.host)}(\\.|$)`, $options: "i" };
+        filter["machine"] = opts.host.includes(".") ? { $regex: `^${escapeRegex(opts.host)}$`, $options: "i" } : { $regex: `^${escapeRegex(opts.host)}(\\.|$)`, $options: "i" };
       }
       filter["$or"] = [
         { tmux_session: { $ne: null } },
@@ -29580,6 +29652,8 @@ async function cmdInfo(config, prefix) {
   console.log(`  Host:      ${machineColor(config.listFQDN ? session.machine : session.machine.split(".")[0])}`);
   console.log(`  Project:   ${session.project_path}`);
   console.log(`  Title:     ${session.title ?? dim("(no title)")}`);
+  if (session.agent_name)
+    console.log(`  Renamed:   ${green(session.agent_name)}`);
   console.log(`  Tag:       ${session.tag ?? dim("(none)")}`);
   console.log(`  State:     ${stateColor(session.state)}`);
   console.log(`  Messages:  ${session.message_count}`);
@@ -29709,18 +29783,7 @@ async function cmdRm(config, prefix, undo) {
 async function cmdPrune(config, days, all) {
   const machine = getHostname(config);
   await withDb(config, async (_db, sessions) => {
-    const filter = {
-      machine,
-      deleted_at: null,
-      $and: [
-        { $or: [{ tag: null }, { tag: { $exists: false } }] }
-      ]
-    };
-    if (!all) {
-      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-      filter["updated_at"] = { $lt: cutoff };
-    }
-    const candidates = await sessions.find(filter).toArray();
+    const candidates = await sessions.find(pruneFilter(machine, { days, all })).toArray();
     if (candidates.length === 0) {
       console.log("Nothing to prune.");
       return;
@@ -29760,11 +29823,10 @@ async function cmdDeleted(config, opts) {
   });
 }
 function purgeOneSession(session, claudeDir) {
-  const pathHash = `-${session.project_path.slice(1).replace(/[/.]/g, "-")}`;
+  const pathHash = encodePathHash(session.project_path);
   const jsonlPath = join2(claudeDir, pathHash, `${session.session_id}.jsonl`);
   const sessionDir = join2(claudeDir, pathHash, session.session_id);
   const deleted = [];
-  const { rmSync } = __require("fs");
   if (existsSync2(jsonlPath)) {
     rmSync(jsonlPath);
     deleted.push(jsonlPath);
@@ -29784,22 +29846,9 @@ async function cmdPurge(config, pattern, confirm, all, host, deletedOnly) {
   const machine = getHostname(config);
   const claudeDir = join2(homedir2(), ".claude", "projects");
   await withDb(config, async (_db, sessions) => {
-    const hostFilter = {};
-    if (host) {
-      hostFilter["machine"] = host.includes(".") ? { $regex: `^${escapeRegex(host)}$`, $options: "i" } : { $regex: `^${escapeRegex(host)}(\\.|$)`, $options: "i" };
-    }
-    const delFilter = deletedOnly ? { deleted_at: { $ne: null } } : {};
     let matches;
     if (all) {
-      const baseFilter = { ...hostFilter, ...delFilter };
-      const matchFilter = pattern === "*" ? {} : {
-        $or: [
-          { session_id: { $regex: `^${escapeRegex(pattern)}` } },
-          { title: { $regex: escapeRegex(pattern), $options: "i" } },
-          { project_name: { $regex: escapeRegex(pattern), $options: "i" } }
-        ]
-      };
-      matches = await sessions.find({ ...baseFilter, ...matchFilter }).toArray();
+      matches = await sessions.find(purgeBulkFilter(pattern, { host, deletedOnly })).toArray();
     } else {
       const found = await sessions.find({ $or: [
         { session_id: { $regex: `^${escapeRegex(pattern)}` } },
@@ -29844,7 +29893,7 @@ async function cmdPurge(config, pattern, confirm, all, host, deletedOnly) {
     console.log(`${all ? "Bulk purge" : "Purge"} ${matches.length} session(s) matching '${pattern}':
 `);
     for (const s of matches) {
-      const pathHash = `-${s.project_path.slice(1).replace(/[/.]/g, "-")}`;
+      const pathHash = encodePathHash(s.project_path);
       const jsonlPath = join2(claudeDir, pathHash, `${s.session_id}.jsonl`);
       const local = s.machine.toLowerCase() === machine.toLowerCase();
       console.log(`  ${s.project_name}  ${s.session_id.slice(0, 14)}  ${s.machine}  ${s.title ?? "(no title)"}  ${local && existsSync2(jsonlPath) ? "files: yes" : dim("files: no")}`);
@@ -29861,9 +29910,16 @@ Run with --yes to confirm.`);
     if (all && matches.length > 1) {
       process.stdout.write(`
 Type YES to permanently delete ${matches.length} sessions: `);
-      const buf = Buffer.alloc(10);
-      const n = __require("fs").readSync(0, buf, 0, 10);
-      const answer = buf.subarray(0, n).toString().trim();
+      let answer;
+      try {
+        const buf = Buffer.alloc(10);
+        const n = readSync(0, buf, 0, 10, null);
+        answer = buf.subarray(0, n).toString().trim();
+      } catch {
+        console.log(`
+Aborted (no input available).`);
+        return;
+      }
       if (answer !== "YES") {
         console.log("Aborted.");
         return;
@@ -30043,7 +30099,6 @@ function ensureCron() {
 </dict>
 </plist>`;
       try {
-        const { writeFileSync, mkdirSync } = __require("fs");
         mkdirSync(join2(homedir2(), "Library", "LaunchAgents"), { recursive: true });
         writeFileSync(plistPath, plist);
         Bun.spawnSync(["launchctl", "load", plistPath]);
@@ -30092,7 +30147,6 @@ async function cmdUpdate(force = false) {
       throw new Error(`HTTP ${resp.status}`);
     const content = await resp.text();
     await Bun.write(binPath, content);
-    const { chmodSync } = await import("fs");
     chmodSync(binPath, 493);
   } catch (err) {
     console.error(`Failed to download bundle: ${err}`);
@@ -30102,7 +30156,6 @@ async function cmdUpdate(force = false) {
   try {
     const resp = await fetch(`${getBaseUrl()}/cs.1`);
     if (resp.ok) {
-      const { mkdirSync } = await import("fs");
       mkdirSync(`${homedir2()}/.local/share/man/man1`, { recursive: true });
       await Bun.write(manPath, await resp.text());
     }
@@ -30187,7 +30240,7 @@ ${bold("Usage:")}
   cs gc --yes                     Soft-delete the duplicates
   cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
   cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
-                                  Bulk hard delete matching sessions
+                                  Bulk hard delete (skips live named/tagged sessions)
   cs agent stop [--host] [--all]  Stop SSH agent on host(s)
   cs update                       Update cs to latest version
   cs update --all                 Update cs on all known hosts via SSH

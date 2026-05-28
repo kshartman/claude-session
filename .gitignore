@@ -13,3 +13,7 @@ dist/
 
 # gstack
 .gstack/
+
+# local integration-test secrets / scratch
+.test-mongo-uri
+.test-probe.ts

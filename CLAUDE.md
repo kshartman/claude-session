@@ -55,7 +55,7 @@ as the session title. Session summary files may exist at:
 
 ```typescript
 interface SessionRecord {
-  _v: number;                  // schema version (current: 1) for rolling migration
+  _v: number;                  // schema version (current: 2) for rolling migration
   session_id: string;          // Claude's session filename stem (UUID)
   machine: string;             // os.hostname()
   project_path: string;        // decoded real path
@@ -63,12 +63,14 @@ interface SessionRecord {
   started_at: Date;            // mtime of first message or file ctime
   updated_at: Date;            // mtime of session file
   message_count: number;       // number of lines in the JSONL
-  title: string | null;        // /rename name if set, else first human message (80 chars)
+  title: string | null;        // display title: /rename name if set, else first human message (80 chars)
+  agent_name: string | null;   // /rename value if set (null = not renamed); protects from bulk prune/purge
   tag: string | null;          // user-applied label (only set via cs tag)
   state: SessionState | null;  // detected from tmux: WORKING | WAITING | IDLE | DEAD
   tmux_session: string | null; // tmux session name (cs-<short-id>)
   summary: string | null;      // first 200 chars of session-memory summary.md if present
   synced_at: Date;             // when this record was last upserted
+  deleted_at: Date | null;     // soft-delete timestamp (rm/prune/gc); null = live
 }
 
 type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";
@@ -177,6 +179,7 @@ cs hosts                     # list distinct machines with session counts and la
 cs rm <id-or-name>              # soft-delete a session (sync won't bring it back)
 cs rm --undo <id-or-name>       # restore a soft-deleted session
 cs prune [--days N] [--all]     # bulk soft-delete unnamed/untagged sessions
+                                # never touches /rename'd (agent_name) or tagged sessions
 cs deleted                      # list soft-deleted sessions
 
 cs gc                           # list duplicate sessions (same project+host, older ones)
@@ -185,6 +188,7 @@ cs gc --yes                     # soft-delete the duplicates
 cs purge <pattern> [--yes]      # hard delete session + local files (irreversible)
 cs purge <pattern> --all [--yes] [--host <h>] [--deleted]
                                 # bulk hard delete matching sessions
+                                # skips live /rename'd or tagged sessions unless already soft-deleted
 
 cs agent stop [--host <h>] [--all]  # stop SSH agent on host(s)
 

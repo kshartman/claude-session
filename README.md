@@ -160,7 +160,7 @@ Tags are stored in MongoDB and show up in `cs list`.
 
 ### `cs info <id-prefix>`
 
-Full details for a single session: ID, machine, project, title, tag, state, message count, timestamps, and schema version.
+Full details for a single session: ID, machine, project, title, `/rename` name (if any), tag, state, message count, timestamps, and schema version.
 
 ### `cs hosts`
 
@@ -206,6 +206,8 @@ Sync also skips orphans automatically, so they won't re-enter MongoDB after a gc
 ### `cs purge <pattern> [--yes] [--all] [--host <name>] [--deleted]`
 
 Hard delete sessions — removes MongoDB records, JSONL files, and session directories. Irreversible. Without `--yes`, shows what would be deleted. Must be run on the host where sessions live.
+
+Bulk mode (`--all`) **skips live `/rename`d or tagged sessions** unless they've already been soft-deleted — a wildcard can't silently destroy a session you named or tagged. To purge one anyway, target it explicitly (`cs purge <name> --yes`) or soft-delete it first.
 
 ```bash
 cs purge 952d                      # preview single session purge
