@@ -17,3 +17,5 @@ dist/
 # local integration-test secrets / scratch
 .test-mongo-uri
 .test-probe.ts
+# safe-pipeline trust signature — per-clone/local, never commit
+.claude/safe-pipeline.manifest*
