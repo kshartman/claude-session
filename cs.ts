@@ -30,6 +30,7 @@ import {
   escapeRegex,
   pruneFilter,
   purgeBulkFilter,
+  isKeepSignalProtected,
   detectState,
   matchPrefix,
   shortId,
@@ -38,6 +39,7 @@ import {
   getHostname,
   hostnameVariants,
   relativeTime,
+  formatBytes,
   formatTable,
   bold,
   dim,
@@ -1587,6 +1589,136 @@ async function cmdPurge(
   });
 }
 
+interface OrphanDir {
+  dir: string;     // absolute path to the ~/.claude/projects/ entry
+  name: string;    // the path-hash dir name
+  files: number;
+  bytes: number;
+}
+
+// A project dir is orphaned when its decoded path no longer exists on disk —
+// the exact condition `cs sync` uses to skip it (findValidProjectPath → null).
+// Sharing the predicate keeps the skip-warning and this cleanup from drifting.
+function scanOrphanDirs(claudeDir: string): OrphanDir[] {
+  const orphans: OrphanDir[] = [];
+  for (const name of readdirSync(claudeDir)) {
+    const dir = join(claudeDir, name);
+    let stat;
+    try {
+      stat = statSync(dir);
+    } catch {
+      continue;
+    }
+    if (!stat.isDirectory()) continue;
+    if (findValidProjectPath(name) !== null) continue; // project still exists
+
+    let files = 0;
+    let bytes = 0;
+    try {
+      for (const entry of readdirSync(dir)) {
+        try {
+          const s = statSync(join(dir, entry));
+          if (s.isFile()) {
+            files++;
+            bytes += s.size;
+          }
+        } catch {
+          // unreadable entry — skip, still report the dir
+        }
+      }
+    } catch {
+      // unreadable dir — report with zero counts
+    }
+    orphans.push({ dir, name, files, bytes });
+  }
+  return orphans;
+}
+
+async function cmdPurgeOrphans(
+  config: CsConfig,
+  confirm: boolean
+): Promise<void> {
+  const claudeDir = join(homedir(), ".claude", "projects");
+  if (!existsSync(claudeDir)) {
+    console.log("~/.claude/projects/ not found — nothing to scan.");
+    return;
+  }
+
+  const orphanDirs = scanOrphanDirs(claudeDir);
+  const machine = getHostname(config);
+
+  await withDb(config, async (_db, sessions) => {
+    // Population B: DB records on this host whose project path is gone (the dir
+    // may already have been removed, so this catches records the FS scan can't).
+    const local = await sessions.find({ machine }).toArray();
+    const staleRecords = local.filter((s) => !existsSync(s.project_path));
+
+    // Keep-signal guard (same invariant as prune/purge --all): a live session
+    // the user explicitly /rename'd or tagged is never bulk-destroyed — even when
+    // its project dir is gone (e.g. a transiently unmounted drive). Those are
+    // listed but skipped; single-target `cs purge <name>` can still remove them.
+    const protectedStale = staleRecords.filter(isKeepSignalProtected);
+    const removableRecords = staleRecords.filter((s) => !isKeepSignalProtected(s));
+    // A protected stale record's on-disk dir must be spared too, or we'd orphan
+    // the very record we kept. Match dirs by the same path-hash purge already uses.
+    const protectedDirNames = new Set(protectedStale.map((s) => encodePathHash(s.project_path)));
+    const removableDirs = orphanDirs.filter((o) => !protectedDirNames.has(o.name));
+
+    if (removableDirs.length === 0 && removableRecords.length === 0) {
+      if (protectedStale.length > 0) {
+        console.log(`No removable orphans. ${yellow(String(protectedStale.length))} named/tagged session(s) with a missing project path were kept (use ${bold("cs purge <name>")} to remove one).`);
+      } else {
+        console.log("No orphans — every ~/.claude/projects/ dir resolves and no local DB record points at a missing path.");
+      }
+      return;
+    }
+
+    if (removableDirs.length > 0) {
+      const totalBytes = removableDirs.reduce((n, o) => n + o.bytes, 0);
+      console.log(`${bold("Orphaned project dirs")}: ${removableDirs.length} dir(s), ${formatBytes(totalBytes)} — project path no longer exists\n`);
+      for (const o of removableDirs) {
+        console.log(`  ${o.name}  ${dim(`${o.files} file(s), ${formatBytes(o.bytes)}`)}`);
+      }
+    }
+    if (removableRecords.length > 0) {
+      console.log(`\n${bold("Stale DB records")} on ${machine}: ${removableRecords.length} session(s) whose project path is gone\n`);
+      for (const s of removableRecords) {
+        console.log(`  ${s.project_name}  ${dim(s.session_id.slice(0, 14))}  ${dim(s.project_path)}`);
+      }
+    }
+    if (protectedStale.length > 0) {
+      console.log(`\n${dim(`Kept ${protectedStale.length} named/tagged session(s) with a missing project path (single-target 'cs purge <name>' to remove):`)}`);
+      for (const s of protectedStale) {
+        const label = s.agent_name ? `name:${s.agent_name}` : `tag:${s.tag}`;
+        console.log(`  ${dim(`${s.project_name}  ${s.session_id.slice(0, 14)}  ${label}`)}`);
+      }
+    }
+
+    if (!confirm) {
+      console.log(`\nRun ${bold("cs purge --orphans --yes")} to permanently remove ${removableDirs.length ? "these dirs" : "these records"}.`);
+      return;
+    }
+
+    let removedDirs = 0;
+    for (const o of removableDirs) {
+      rmSync(o.dir, { recursive: true });
+      console.log(`  Deleted ${o.dir}/`);
+      removedDirs++;
+    }
+
+    let removedRecords = 0;
+    for (const s of removableRecords) {
+      await sessions.deleteOne({ session_id: s.session_id, machine: s.machine });
+      removedRecords++;
+    }
+
+    const parts: string[] = [];
+    if (removedDirs) parts.push(`${red(String(removedDirs))} orphaned dir(s)`);
+    if (removedRecords) parts.push(`${red(String(removedRecords))} stale DB record(s)`);
+    console.log(`\nPurged ${parts.join(", ")}.`);
+  });
+}
+
 async function cmdGc(
   config: CsConfig,
   confirm: boolean
@@ -1943,6 +2075,7 @@ ${bold("Usage:")}
   cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
   cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
                                   Bulk hard delete (skips live named/tagged sessions)
+  cs purge --orphans [--yes]      Remove ~/.claude/projects/ dirs whose project path is gone
   cs agent stop [--host] [--all]  Stop SSH agent on host(s)
   cs update                       Update cs to latest version
   cs update --all                 Update cs on all known hosts via SSH
@@ -2184,6 +2317,10 @@ async function main(): Promise<void> {
 
     case "purge": {
       const yes = args.includes("--yes");
+      if (args.includes("--orphans")) {
+        await cmdPurgeOrphans(config, yes);
+        break;
+      }
       const all = args.includes("--all");
       const deletedOnly = args.includes("--deleted");
       const hostIdx = args.indexOf("--host");

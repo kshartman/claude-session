@@ -189,6 +189,9 @@ cs purge <pattern> [--yes]      # hard delete session + local files (irreversibl
 cs purge <pattern> --all [--yes] [--host <h>] [--deleted]
                                 # bulk hard delete matching sessions
                                 # skips live /rename'd or tagged sessions unless already soft-deleted
+cs purge --orphans [--yes]      # remove ~/.claude/projects/ dirs whose project path is gone
+                                # (the dirs sync skips) + stale DB records on this host
+                                # skips live /rename'd or tagged sessions (keep-signal guard)
 
 cs agent stop [--host <h>] [--all]  # stop SSH agent on host(s)
 

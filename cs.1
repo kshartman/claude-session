@@ -184,6 +184,22 @@ session explicitly to purge it. With
 targets only soft-deleted sessions. Must be run on the host where sessions live.
 This is irreversible.
 .TP
+.BI "cs purge" " --orphans [--yes]"
+Remove orphaned local state on this machine:
+.I ~/.claude/projects/
+directories whose decoded project path no longer exists (the dirs
+.B cs sync
+skips with a
+.I "cannot decode path"
+warning), plus DB records on this host that point at a missing project path.
+Without
+.BR --yes ,
+lists what was found. Honors the keep-signal guard \(em a live
+.B /rename
+d or tagged session whose project path is gone (e.g. a transiently unmounted
+drive) is listed but kept; target it explicitly to remove it. Local-only and
+irreversible.
+.TP
 .BI "cs info" " id-or-name"
 Display the full record for a single session, including session ID, machine,
 project path, title,

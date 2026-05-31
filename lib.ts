@@ -215,6 +215,17 @@ export function relativeTime(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
+// --- size formatting ---
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${Math.round(kb)}K`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)}M`;
+  return `${(mb / 1024).toFixed(1)}G`;
+}
+
 // --- path decoding ---
 
 export function decodePathHash(hash: string): string {
@@ -512,6 +523,15 @@ export function escapeRegex(str: string): string {
 // being soft-deleted. These two clauses match the *absence* of those signals.
 const NOT_NAMED = { $or: [{ agent_name: null }, { agent_name: { $exists: false } }] };
 const NOT_TAGGED = { $or: [{ tag: null }, { tag: { $exists: false } }] };
+
+// The same keep-signal rule as a JS predicate, for code paths that filter
+// already-fetched records in memory rather than via a Mongo query (e.g.
+// purge --orphans). A live (not soft-deleted) named or tagged session is kept.
+export function isKeepSignalProtected(
+  s: Pick<SessionRecord, "deleted_at" | "agent_name" | "tag">
+): boolean {
+  return s.deleted_at == null && (s.agent_name != null || s.tag != null);
+}
 
 // Selects sessions `cs prune` may soft-delete on `machine`: not soft-deleted,
 // not named, not tagged, and (unless `all`) older than `days`.

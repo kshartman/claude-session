@@ -8,6 +8,7 @@ import {
   parseSessionJsonl,
   pruneFilter,
   purgeBulkFilter,
+  isKeepSignalProtected,
   escapeRegex,
   detectState,
   matchPrefix,
@@ -15,6 +16,7 @@ import {
   tmuxName,
   shellQuote,
   relativeTime,
+  formatBytes,
   padRight,
   formatTable,
   redactUri,
@@ -234,6 +236,30 @@ describe("relativeTime", () => {
   });
 });
 
+// --- size formatting ---
+
+describe("formatBytes", () => {
+  test("bytes under 1K", () => {
+    expect(formatBytes(0)).toBe("0B");
+    expect(formatBytes(512)).toBe("512B");
+    expect(formatBytes(1023)).toBe("1023B");
+  });
+
+  test("kilobytes", () => {
+    expect(formatBytes(1024)).toBe("1K");
+    expect(formatBytes(184 * 1024)).toBe("184K");
+  });
+
+  test("megabytes", () => {
+    expect(formatBytes(1024 * 1024)).toBe("1.0M");
+    expect(formatBytes(Math.round(2.5 * 1024 * 1024))).toBe("2.5M");
+  });
+
+  test("gigabytes", () => {
+    expect(formatBytes(3 * 1024 * 1024 * 1024)).toBe("3.0G");
+  });
+});
+
 // --- table formatting ---
 
 describe("padRight", () => {
@@ -283,6 +309,24 @@ describe("pruneFilter", () => {
   test("applies an age cutoff when not --all", () => {
     const f = pruneFilter("h", { days: 7, all: false });
     expect(f["updated_at"]).toHaveProperty("$lt");
+  });
+});
+
+describe("isKeepSignalProtected", () => {
+  test("live named session is protected", () => {
+    expect(isKeepSignalProtected({ deleted_at: null, agent_name: "my-sess", tag: null })).toBe(true);
+  });
+
+  test("live tagged session is protected", () => {
+    expect(isKeepSignalProtected({ deleted_at: null, agent_name: null, tag: "wip" })).toBe(true);
+  });
+
+  test("live plain session is not protected", () => {
+    expect(isKeepSignalProtected({ deleted_at: null, agent_name: null, tag: null })).toBe(false);
+  });
+
+  test("soft-deleted named session is not protected (already in trash)", () => {
+    expect(isKeepSignalProtected({ deleted_at: new Date(), agent_name: "my-sess", tag: "wip" })).toBe(false);
   });
 });
 

@@ -28619,6 +28619,17 @@ function relativeTime(date) {
     return `${days}d ago`;
   return date.toISOString().slice(0, 10);
 }
+function formatBytes(bytes) {
+  if (bytes < 1024)
+    return `${bytes}B`;
+  const kb = bytes / 1024;
+  if (kb < 1024)
+    return `${Math.round(kb)}K`;
+  const mb = kb / 1024;
+  if (mb < 1024)
+    return `${mb.toFixed(1)}M`;
+  return `${(mb / 1024).toFixed(1)}G`;
+}
 function decodePathHash(hash) {
   if (!hash.startsWith("-"))
     return hash;
@@ -28793,6 +28804,9 @@ function escapeRegex(str) {
 }
 var NOT_NAMED = { $or: [{ agent_name: null }, { agent_name: { $exists: false } }] };
 var NOT_TAGGED = { $or: [{ tag: null }, { tag: { $exists: false } }] };
+function isKeepSignalProtected(s) {
+  return s.deleted_at == null && (s.agent_name != null || s.tag != null);
+}
 function pruneFilter(machine, opts) {
   const filter = {
     machine,
@@ -29937,6 +29951,109 @@ Aborted (no input available).`);
 Purged ${red(String(purged))} session(s).`);
   });
 }
+function scanOrphanDirs(claudeDir) {
+  const orphans = [];
+  for (const name of readdirSync(claudeDir)) {
+    const dir = join2(claudeDir, name);
+    let stat;
+    try {
+      stat = statSync(dir);
+    } catch {
+      continue;
+    }
+    if (!stat.isDirectory())
+      continue;
+    if (findValidProjectPath(name) !== null)
+      continue;
+    let files = 0;
+    let bytes = 0;
+    try {
+      for (const entry of readdirSync(dir)) {
+        try {
+          const s = statSync(join2(dir, entry));
+          if (s.isFile()) {
+            files++;
+            bytes += s.size;
+          }
+        } catch {}
+      }
+    } catch {}
+    orphans.push({ dir, name, files, bytes });
+  }
+  return orphans;
+}
+async function cmdPurgeOrphans(config, confirm) {
+  const claudeDir = join2(homedir2(), ".claude", "projects");
+  if (!existsSync2(claudeDir)) {
+    console.log("~/.claude/projects/ not found \u2014 nothing to scan.");
+    return;
+  }
+  const orphanDirs = scanOrphanDirs(claudeDir);
+  const machine = getHostname(config);
+  await withDb(config, async (_db, sessions) => {
+    const local = await sessions.find({ machine }).toArray();
+    const staleRecords = local.filter((s) => !existsSync2(s.project_path));
+    const protectedStale = staleRecords.filter(isKeepSignalProtected);
+    const removableRecords = staleRecords.filter((s) => !isKeepSignalProtected(s));
+    const protectedDirNames = new Set(protectedStale.map((s) => encodePathHash(s.project_path)));
+    const removableDirs = orphanDirs.filter((o) => !protectedDirNames.has(o.name));
+    if (removableDirs.length === 0 && removableRecords.length === 0) {
+      if (protectedStale.length > 0) {
+        console.log(`No removable orphans. ${yellow(String(protectedStale.length))} named/tagged session(s) with a missing project path were kept (use ${bold("cs purge <name>")} to remove one).`);
+      } else {
+        console.log("No orphans \u2014 every ~/.claude/projects/ dir resolves and no local DB record points at a missing path.");
+      }
+      return;
+    }
+    if (removableDirs.length > 0) {
+      const totalBytes = removableDirs.reduce((n, o) => n + o.bytes, 0);
+      console.log(`${bold("Orphaned project dirs")}: ${removableDirs.length} dir(s), ${formatBytes(totalBytes)} \u2014 project path no longer exists
+`);
+      for (const o of removableDirs) {
+        console.log(`  ${o.name}  ${dim(`${o.files} file(s), ${formatBytes(o.bytes)}`)}`);
+      }
+    }
+    if (removableRecords.length > 0) {
+      console.log(`
+${bold("Stale DB records")} on ${machine}: ${removableRecords.length} session(s) whose project path is gone
+`);
+      for (const s of removableRecords) {
+        console.log(`  ${s.project_name}  ${dim(s.session_id.slice(0, 14))}  ${dim(s.project_path)}`);
+      }
+    }
+    if (protectedStale.length > 0) {
+      console.log(`
+${dim(`Kept ${protectedStale.length} named/tagged session(s) with a missing project path (single-target 'cs purge <name>' to remove):`)}`);
+      for (const s of protectedStale) {
+        const label = s.agent_name ? `name:${s.agent_name}` : `tag:${s.tag}`;
+        console.log(`  ${dim(`${s.project_name}  ${s.session_id.slice(0, 14)}  ${label}`)}`);
+      }
+    }
+    if (!confirm) {
+      console.log(`
+Run ${bold("cs purge --orphans --yes")} to permanently remove ${removableDirs.length ? "these dirs" : "these records"}.`);
+      return;
+    }
+    let removedDirs = 0;
+    for (const o of removableDirs) {
+      rmSync(o.dir, { recursive: true });
+      console.log(`  Deleted ${o.dir}/`);
+      removedDirs++;
+    }
+    let removedRecords = 0;
+    for (const s of removableRecords) {
+      await sessions.deleteOne({ session_id: s.session_id, machine: s.machine });
+      removedRecords++;
+    }
+    const parts = [];
+    if (removedDirs)
+      parts.push(`${red(String(removedDirs))} orphaned dir(s)`);
+    if (removedRecords)
+      parts.push(`${red(String(removedRecords))} stale DB record(s)`);
+    console.log(`
+Purged ${parts.join(", ")}.`);
+  });
+}
 async function cmdGc(config, confirm) {
   await withDb(config, async (_db, sessions) => {
     const all = await sessions.find({ deleted_at: null }).sort({ updated_at: -1 }).toArray();
@@ -30241,6 +30358,7 @@ ${bold("Usage:")}
   cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
   cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
                                   Bulk hard delete (skips live named/tagged sessions)
+  cs purge --orphans [--yes]      Remove ~/.claude/projects/ dirs whose project path is gone
   cs agent stop [--host] [--all]  Stop SSH agent on host(s)
   cs update                       Update cs to latest version
   cs update --all                 Update cs on all known hosts via SSH
@@ -30453,6 +30571,10 @@ async function main() {
     }
     case "purge": {
       const yes = args.includes("--yes");
+      if (args.includes("--orphans")) {
+        await cmdPurgeOrphans(config, yes);
+        break;
+      }
       const all = args.includes("--all");
       const deletedOnly = args.includes("--deleted");
       const hostIdx = args.indexOf("--host");

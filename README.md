@@ -217,6 +217,23 @@ cs purge --all --deleted --yes     # purge all soft-deleted sessions
 cs purge --all --host dev --yes    # purge all sessions on dev
 ```
 
+### `cs purge --orphans [--yes]`
+
+Remove orphaned local state — `~/.claude/projects/` directories whose decoded
+project path no longer exists on disk (so `cs sync` skips them with a
+`cannot decode path` warning), plus DB records on this host pointing at a
+missing project path. This is the cleanup for the cruft those skip-warnings
+flag. Local-only and irreversible; without `--yes` it just lists what it found.
+
+Honors the same keep-signal guard as bulk purge: a **live `/rename`d or tagged**
+session whose project path is gone (e.g. a transiently unmounted drive) is
+listed but **kept** — single-target `cs purge <name>` to remove one.
+
+```bash
+cs purge --orphans                 # preview orphaned dirs + stale records
+cs purge --orphans --yes           # remove them
+```
+
 ### `cs update [--force] [--all]`
 
 Check for a new version and update in place. `--force` re-downloads even when the version matches. `--all` updates all known hosts via SSH. Also installs cron sync if not set up (unless `noCron` in config).
