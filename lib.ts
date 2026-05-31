@@ -2,7 +2,7 @@
 
 // VERSION is canonical in the VERSION file; `bun run build` syncs this constant
 // via scripts/sync-version.ts. Edit the VERSION file, not this line.
-export const VERSION = "1.6.0";
+export const VERSION = "1.7.0";
 export const SCHEMA_VERSION = 2;
 
 export type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";
@@ -247,7 +247,7 @@ export function findValidProjectPath(hash: string): string | null {
   const naive = decodePathHash(hash);
   if (existsSync(naive)) return naive;
 
-  // Try common patterns where "-" might be "." (e.g., example.com → bogometer-com)
+  // Try common patterns where "-" might be "." (e.g., "example-com" → "example.com")
   // Walk segments and try "." replacements
   const segments = hash.slice(1).split("-"); // remove leading "-"
   return tryReconstruct(segments, 0, "");

@@ -76,7 +76,7 @@ List sessions from the database. Defaults to all hosts, sorted by most recent.
 cs list                        # all hosts
 cs list --local                # this host only
 cs list --host dev             # specific host
-cs list --project trading      # filter by project
+cs list --project myapp        # filter by project
 cs list --limit 5              # show 5 most recent
 cs list --sort project         # sort by project name
 ```
@@ -110,7 +110,7 @@ Reconnect to a session. Works **across machines** — if the session is on a dif
 cs attach claude-session    # by /rename name
 cs attach 952d              # by ID prefix
 cs attach a4b9              # remote session — auto-SSH
-cs attach onepay --host dev # disambiguate when same name on multiple hosts
+cs attach myapp --host dev  # disambiguate when same name on multiple hosts
 ```
 
 You can use a session ID prefix (like git), a `/rename` name (exact match), or a project name. If ambiguous, cs prefers the local host's session. Use `--host` to override.
@@ -124,7 +124,7 @@ Terminate a tmux session, local or remote. Updates MongoDB state immediately.
 ```bash
 cs kill claude-session            # kill by name
 cs kill 952d                      # kill by ID prefix
-cs kill onepay --host LAKEDEV     # explicit host
+cs kill myapp --host host1        # explicit host
 cs kill --all                     # kill all sessions everywhere
 cs kill --all --host dev          # kill all sessions on dev
 ```

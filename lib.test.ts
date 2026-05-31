@@ -356,7 +356,7 @@ describe("purgeBulkFilter", () => {
   });
 
   test("host and --deleted scope the query", () => {
-    const f = purgeBulkFilter("*", { host: "ndao.example.com", deletedOnly: true });
+    const f = purgeBulkFilter("*", { host: "host1.example.com", deletedOnly: true });
     expect(f["machine"]).toHaveProperty("$regex");
     expect(f["deleted_at"]).toEqual({ $ne: null });
   });
@@ -395,10 +395,10 @@ describe("shellQuote", () => {
 
 describe("hostnameVariants", () => {
   test("returns short name for FQDN", () => {
-    expect(hostnameVariants("ndao.bogometer.com")).toEqual(["ndao"]);
+    expect(hostnameVariants("host.example.com")).toEqual(["host"]);
   });
   test("returns empty for short name", () => {
-    expect(hostnameVariants("LAKEDEV")).toEqual([]);
+    expect(hostnameVariants("WORKSTATION")).toEqual([]);
   });
   test("handles multi-level domain", () => {
     expect(hostnameVariants("a.b.c.d")).toEqual(["a"]);

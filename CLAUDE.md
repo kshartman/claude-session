@@ -39,7 +39,7 @@ Claude Code stores sessions locally at:
 ```
 
 The `<path-hash>` directory name is the project path with `/` replaced by `-`
-(e.g. `/home/shane/projects/gstack` → `-home-shane-projects-gstack`).
+(e.g. `/home/user/projects/myapp` → `-home-user-projects-myapp`).
 Decode it by replacing leading `-` and remaining `-` with `/` — but validate
 against the actual filesystem to handle edge cases.
 
@@ -90,7 +90,7 @@ Sessions launched via `cs launch` run Claude Code inside detached tmux sessions,
 surviving SSH disconnects. tmux session naming convention:
 
 - Has `/rename` name → use it as-is (e.g., `claude-session`)
-- No rename → `<project>-<short-id>` (e.g., `trading-8ffc2399`)
+- No rename → `<project>-<short-id>` (e.g., `myapp-8ffc2399`)
 
 ### Remote Attach
 
