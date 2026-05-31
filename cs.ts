@@ -1699,6 +1699,25 @@ async function cmdPurgeOrphans(
       return;
     }
 
+    // Bulk hard delete: demand typed confirmation, same gate as purge --all.
+    const removeCount = removableDirs.length + removableRecords.length;
+    if (removeCount > 1) {
+      process.stdout.write(`\nType YES to permanently delete ${removableDirs.length} dir(s) + ${removableRecords.length} record(s): `);
+      let answer: string;
+      try {
+        const buf = Buffer.alloc(10);
+        const n = readSync(0, buf, 0, 10, null);
+        answer = buf.subarray(0, n).toString().trim();
+      } catch {
+        console.log("\nAborted (no input available).");
+        return;
+      }
+      if (answer !== "YES") {
+        console.log("Aborted.");
+        return;
+      }
+    }
+
     let removedDirs = 0;
     for (const o of removableDirs) {
       rmSync(o.dir, { recursive: true });

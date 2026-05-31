@@ -224,6 +224,7 @@ project path no longer exists on disk (so `cs sync` skips them with a
 `cannot decode path` warning), plus DB records on this host pointing at a
 missing project path. This is the cleanup for the cruft those skip-warnings
 flag. Local-only and irreversible; without `--yes` it just lists what it found.
+Removing more than one item also requires a typed `YES`, same as `purge --all`.
 
 Honors the same keep-signal guard as bulk purge: a **live `/rename`d or tagged**
 session whose project path is gone (e.g. a transiently unmounted drive) is

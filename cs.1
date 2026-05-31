@@ -194,7 +194,11 @@ skips with a
 warning), plus DB records on this host that point at a missing project path.
 Without
 .BR --yes ,
-lists what was found. Honors the keep-signal guard \(em a live
+lists what was found; removing more than one item also requires a typed
+.B YES
+(same as
+.BR "purge --all" ).
+Honors the keep-signal guard \(em a live
 .B /rename
 d or tagged session whose project path is gone (e.g. a transiently unmounted
 drive) is listed but kept; target it explicitly to remove it. Local-only and

@@ -28470,7 +28470,7 @@ import { homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.7.0";
+var VERSION = "1.7.1";
 var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -30033,6 +30033,25 @@ ${dim(`Kept ${protectedStale.length} named/tagged session(s) with a missing proj
       console.log(`
 Run ${bold("cs purge --orphans --yes")} to permanently remove ${removableDirs.length ? "these dirs" : "these records"}.`);
       return;
+    }
+    const removeCount = removableDirs.length + removableRecords.length;
+    if (removeCount > 1) {
+      process.stdout.write(`
+Type YES to permanently delete ${removableDirs.length} dir(s) + ${removableRecords.length} record(s): `);
+      let answer;
+      try {
+        const buf = Buffer.alloc(10);
+        const n = readSync(0, buf, 0, 10, null);
+        answer = buf.subarray(0, n).toString().trim();
+      } catch {
+        console.log(`
+Aborted (no input available).`);
+        return;
+      }
+      if (answer !== "YES") {
+        console.log("Aborted.");
+        return;
+      }
     }
     let removedDirs = 0;
     for (const o of removableDirs) {
