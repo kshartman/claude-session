@@ -28470,7 +28470,7 @@ import { homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.7.1";
+var VERSION = "1.8.0";
 var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29296,8 +29296,10 @@ async function resolveSession(config, prefix, host) {
     return matches[0];
   });
 }
+var CS_AGENT_SOCK = join2(homedir2(), ".ssh", "cs-agent.sock");
+var CS_AGENT_SOCK_SH = "$HOME/.ssh/cs-agent.sock";
 async function ensureLocalAgent(config, tmuxSession) {
-  const agentSock = join2(homedir2(), ".ssh", "cs-agent.sock");
+  const agentSock = CS_AGENT_SOCK;
   const keyTimeout = config.agentKeyTimeout ?? 28800;
   const check = Bun.spawnSync([
     "bash",
@@ -29374,7 +29376,7 @@ async function cmdAttach(config, prefix, host) {
     const check = await tmuxRun("has-session", "-t", tmuxSession);
     if (check.exitCode !== 0) {
       console.log(`Session not running \u2014 starting ${green(tmuxSession)}...`);
-      const create = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", session.project_path, "bash", "-lc", `claude --resume '${session.session_id}'`);
+      const create = await tmuxRun("new-session", "-d", "-s", tmuxSession, "-c", session.project_path, "-e", `SSH_AUTH_SOCK=${CS_AGENT_SOCK}`, "bash", "-lc", `claude --resume '${session.session_id}'`);
       if (create.exitCode !== 0) {
         console.error(`Failed to create tmux session: ${create.stdout}`);
         process.exit(1);
@@ -29398,7 +29400,7 @@ async function cmdAttach(config, prefix, host) {
     await proc.exited;
   } else {
     console.log(`Connecting to ${machineColor(session.machine)}...`);
-    const agentSock = "$HOME/.ssh/cs-agent.sock";
+    const agentSock = CS_AGENT_SOCK_SH;
     const keyTimeout = config.agentKeyTimeout ?? 28800;
     const qTmux = shellQuote(tmuxSession);
     const qPath = shellQuote(session.project_path);
@@ -29409,8 +29411,8 @@ async function cmdAttach(config, prefix, host) {
       `export PATH="${config.remotePath}:$PATH"`,
       `AGENT_SOCK="${agentSock}"`,
       `export SSH_AUTH_SOCK="$AGENT_SOCK"`,
-      `if ! ssh-add -l >/dev/null 2>&1; then`,
-      `  pkill -f "ssh-agent -a $AGENT_SOCK" 2>/dev/null || true`,
+      `ssh-add -l >/dev/null 2>&1; AGENT_RC=$?`,
+      `if [ "$AGENT_RC" -eq 2 ]; then`,
       `  rm -f "$AGENT_SOCK" 2>/dev/null`,
       `  eval $(ssh-agent -a "$AGENT_SOCK") >/dev/null 2>&1`,
       `fi`,
@@ -30132,11 +30134,75 @@ Soft-deleted ${yellow(String(deleted))} session(s). Use ${bold("cs deleted")} to
   });
 }
 var DEFAULT_REPO_URL = "https://raw.githubusercontent.com/kshartman/claude-session/main";
+function maybeWarnLinger() {
+  const r = Bun.spawnSync(["bash", "-c", `loginctl show-user "$USER" -p Linger 2>/dev/null`]);
+  if (r.stdout.toString().trim() === "Linger=no") {
+    console.log(dim("Note: Linger=no \u2014 the cs-agent dies on your last logout. " + "Run 'loginctl enable-linger $USER' to keep it across disconnects."));
+  }
+}
+async function cmdAddKey(config, host, all) {
+  const machine = getHostname(config);
+  const keyTimeout = config.agentKeyTimeout ?? 28800;
+  const keyFileArg = config.agentKeyFile ? ` "${config.agentKeyFile.replace(/^~/, "$HOME")}"` : "";
+  const script = [
+    `export SSH_AUTH_SOCK="${CS_AGENT_SOCK_SH}"`,
+    `export PATH="${config.remotePath}:$PATH"`,
+    `ssh-add -l >/dev/null 2>&1; rc=$?`,
+    `[ "$rc" -eq 2 ] && eval $(ssh-agent -a "$SSH_AUTH_SOCK") >/dev/null 2>&1`,
+    `echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."`,
+    `ssh-add -t ${keyTimeout}${keyFileArg}`
+  ].join("; ");
+  const addLocal = async () => {
+    const proc = Bun.spawn(["bash", "-lc", script], {
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit"
+    });
+    await proc.exited;
+    maybeWarnLinger();
+  };
+  const addRemote = async (h) => {
+    const candidates = [h, h.toLowerCase(), ...hostnameVariants(h), h.split(".")[0].toLowerCase()];
+    for (const tryHost of [...new Set(candidates)]) {
+      const proc = Bun.spawn([
+        "ssh",
+        tryHost,
+        "-o",
+        "ControlPath=none",
+        "-t",
+        script
+      ], { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+      if (await proc.exited === 0)
+        return true;
+    }
+    return false;
+  };
+  const isLocalHost = (h) => h.toLowerCase() === machine.toLowerCase() || h.toLowerCase() === machine.split(".")[0].toLowerCase();
+  if (all) {
+    const hosts = await withDb(config, async (_db, sessions) => {
+      return sessions.aggregate([{ $group: { _id: "$machine" } }]).toArray();
+    });
+    console.log(`${machine.split(".")[0]}:`);
+    await addLocal();
+    const remoteHosts = hosts.map((h) => h["_id"]).filter((h) => h.toLowerCase() !== machine.toLowerCase());
+    for (const h of remoteHosts) {
+      console.log(`
+${h.split(".")[0]}:`);
+      const ok = await addRemote(h);
+      if (!ok)
+        console.log(`  ${dim("unreachable")}`);
+    }
+  } else if (host && !isLocalHost(host)) {
+    await addRemote(host);
+  } else {
+    await addLocal();
+  }
+}
 async function cmdAgentStop(config, host, all) {
   const machine = getHostname(config);
-  const agentSock = "$HOME/.ssh/cs-agent.sock";
+  const agentSock = CS_AGENT_SOCK_SH;
   const stopLocal = () => {
-    const sock = join2(homedir2(), ".ssh", "cs-agent.sock");
+    const sock = CS_AGENT_SOCK;
     Bun.spawnSync(["bash", "-c", `pkill -f "ssh-agent -a ${sock}" 2>/dev/null; rm -f "${sock}"`]);
   };
   const stopRemote = async (h) => {
@@ -30378,6 +30444,7 @@ ${bold("Usage:")}
   cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
                                   Bulk hard delete (skips live named/tagged sessions)
   cs purge --orphans [--yes]      Remove ~/.claude/projects/ dirs whose project path is gone
+  cs add-key [--host <name>] [--all]  Reload SSH key into cs-agent (resets the key timer)
   cs agent stop [--host] [--all]  Stop SSH agent on host(s)
   cs update                       Update cs to latest version
   cs update --all                 Update cs on all known hosts via SSH
@@ -30430,6 +30497,23 @@ async function main() {
       console.error("Usage: cs agent stop [--host <name>] [--all]");
       process.exit(1);
     }
+    return;
+  }
+  if (command === "add-key") {
+    let config2;
+    try {
+      config2 = loadConfig();
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        console.error(err.message);
+        process.exit(1);
+      }
+      throw err;
+    }
+    const all = args.includes("--all");
+    const hostIdx = args.indexOf("--host");
+    const host = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
+    await cmdAddKey(config2, host, all);
     return;
   }
   if (command === "update") {

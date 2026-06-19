@@ -105,6 +105,18 @@ Requires SSH key auth between machines. On detach (Ctrl-b d), the SSH connection
 closes and the user returns to their local shell. The Claude session continues
 running on the remote host.
 
+### SSH agent socket
+
+All session setup pins `SSH_AUTH_SOCK` to a single shared per-host agent at
+`~/.ssh/cs-agent.sock` (via `tmux new-session -e` on both the local and remote
+create paths), so every cs session on a host uses the same agent deterministically.
+Attach starts the agent only when its socket is dead and never kills a live one;
+`cs add-key` (re)loads the key and resets its lifetime; `cs agent stop` kills the
+shared agent, cutting SSH access for all cs sessions at once. On hosts whose
+dotfiles re-export `SSH_AUTH_SOCK` from a login shell, the user must add a guard
+that bails when `SSH_AUTH_SOCK` already points at `*/cs-agent.sock`, or the pin is
+overwritten (claude runs under `bash -lc`, a login shell).
+
 Session identifiers can be: session ID prefix, `/rename` name (exact match),
 or title prefix (case-insensitive).
 
@@ -193,7 +205,14 @@ cs purge --orphans [--yes]      # remove ~/.claude/projects/ dirs whose project 
                                 # (the dirs sync skips) + stale DB records on this host
                                 # skips live /rename'd or tagged sessions (keep-signal guard)
 
-cs agent stop [--host <h>] [--all]  # stop SSH agent on host(s)
+cs add-key [--host <h>] [--all] # reload SSH key into the shared cs-agent,
+                                # resetting its lifetime (key timer). One call
+                                # covers every session on the host (they share
+                                # the one agent). --host runs it on a remote
+                                # host; --all does every known host.
+cs agent stop [--host <h>] [--all]  # stop SSH agent on host(s); kills the
+                                # shared cs-agent so all cs sessions on the host
+                                # lose SSH access at once
 
 cs update                       # check for new version and update in place
 cs update --force               # re-download even if version matches

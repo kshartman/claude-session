@@ -691,11 +691,18 @@ async function resolveSession(
 }
 
 
+// Single shared ssh-agent socket per host. Every cs session pins
+// SSH_AUTH_SOCK to it so key state is deterministic and `cs add-key` /
+// `cs agent stop` act on one well-known agent. CS_AGENT_SOCK is the resolved
+// local path; CS_AGENT_SOCK_SH is the unexpanded form for remote shells.
+const CS_AGENT_SOCK = join(homedir(), ".ssh", "cs-agent.sock");
+const CS_AGENT_SOCK_SH = "$HOME/.ssh/cs-agent.sock";
+
 async function ensureLocalAgent(
   config: CsConfig,
   tmuxSession: string
 ): Promise<void> {
-  const agentSock = join(homedir(), ".ssh", "cs-agent.sock");
+  const agentSock = CS_AGENT_SOCK;
   const keyTimeout = config.agentKeyTimeout ?? 28800;
 
   // Start agent if not running
@@ -792,6 +799,7 @@ async function cmdAttach(
       const create = await tmuxRun(
         "new-session", "-d", "-s", tmuxSession,
         "-c", session.project_path,
+        "-e", `SSH_AUTH_SOCK=${CS_AGENT_SOCK}`,
         "bash", "-lc", `claude --resume '${session.session_id}'`
       );
       if (create.exitCode !== 0) {
@@ -831,7 +839,7 @@ async function cmdAttach(
     // Remote: ensure session + agent, then attach
     console.log(`Connecting to ${machineColor(session.machine)}...`);
 
-    const agentSock = "$HOME/.ssh/cs-agent.sock";
+    const agentSock = CS_AGENT_SOCK_SH;
     const keyTimeout = config.agentKeyTimeout ?? 28800;
 
     // Step 1: ensure tmux session + persistent agent on remote (non-interactive)
@@ -845,8 +853,12 @@ async function cmdAttach(
       // Ensure persistent agent
       `AGENT_SOCK="${agentSock}"`,
       `export SSH_AUTH_SOCK="$AGENT_SOCK"`,
-      `if ! ssh-add -l >/dev/null 2>&1; then`,
-      `  pkill -f "ssh-agent -a $AGENT_SOCK" 2>/dev/null || true`,
+      // Only (re)start the agent when the socket is truly dead (ssh-add -l exit 2).
+      // A live-but-keyless agent (exit 1) is left alone so a routine attach never
+      // wipes the shared key out from under running sessions; the interactive
+      // ssh-add -t fallback below keys a cold agent.
+      `ssh-add -l >/dev/null 2>&1; AGENT_RC=$?`,
+      `if [ "$AGENT_RC" -eq 2 ]; then`,
       `  rm -f "$AGENT_SOCK" 2>/dev/null`,
       `  eval $(ssh-agent -a "$AGENT_SOCK") >/dev/null 2>&1`,
       `fi`,
@@ -1818,16 +1830,100 @@ async function cmdGc(
 
 const DEFAULT_REPO_URL = "https://raw.githubusercontent.com/kshartman/claude-session/main";
 
+// Warn (best-effort) when systemd would reap the agent on last logout, so a
+// key added from a remote session won't survive disconnect. Degrades silently
+// when loginctl is absent (non-systemd host) — non-zero exit yields no match.
+function maybeWarnLinger(): void {
+  const r = Bun.spawnSync(["bash", "-c", `loginctl show-user "$USER" -p Linger 2>/dev/null`]);
+  if (r.stdout.toString().trim() === "Linger=no") {
+    console.log(dim(
+      "Note: Linger=no — the cs-agent dies on your last logout. " +
+      "Run 'loginctl enable-linger $USER' to keep it across disconnects."
+    ));
+  }
+}
+
+// `cs add-key` — deterministically (re)load the key into the shared cs-agent,
+// resetting its lifetime. Unlike attach's ensureLocalAgent, the ssh-add is
+// unconditional (re-adding an identity resets its -t timer) and it never pkills
+// a live agent (only starts one when the socket is dead). One invocation covers
+// every session on the host since they share the one agent.
+async function cmdAddKey(
+  config: CsConfig,
+  host: string | null,
+  all: boolean
+): Promise<void> {
+  const machine = getHostname(config);
+  const keyTimeout = config.agentKeyTimeout ?? 28800;
+  const keyFileArg = config.agentKeyFile
+    ? ` "${config.agentKeyFile.replace(/^~/, "$HOME")}"`
+    : "";
+
+  // $HOME expands on whichever host runs it, so the same script serves local
+  // and remote. The explicit SSH_AUTH_SOCK export overrides any profile/dotfile
+  // value, so add-key always targets the cs-agent regardless of dotfiles.
+  const script = [
+    `export SSH_AUTH_SOCK="${CS_AGENT_SOCK_SH}"`,
+    `export PATH="${config.remotePath}:$PATH"`,
+    `ssh-add -l >/dev/null 2>&1; rc=$?`,
+    `[ "$rc" -eq 2 ] && eval $(ssh-agent -a "$SSH_AUTH_SOCK") >/dev/null 2>&1`,
+    `echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."`,
+    `ssh-add -t ${keyTimeout}${keyFileArg}`,
+  ].join("; ");
+
+  const addLocal = async (): Promise<void> => {
+    const proc = Bun.spawn(["bash", "-lc", script], {
+      stdin: "inherit", stdout: "inherit", stderr: "inherit",
+    });
+    await proc.exited;
+    maybeWarnLinger();
+  };
+
+  const addRemote = async (h: string): Promise<boolean> => {
+    const candidates = [h, h.toLowerCase(), ...hostnameVariants(h), h.split(".")[0]!.toLowerCase()];
+    for (const tryHost of [...new Set(candidates)]) {
+      const proc = Bun.spawn([
+        "ssh", tryHost, "-o", "ControlPath=none", "-t", script,
+      ], { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+      if ((await proc.exited) === 0) return true;
+    }
+    return false;
+  };
+
+  const isLocalHost = (h: string): boolean =>
+    h.toLowerCase() === machine.toLowerCase() ||
+    h.toLowerCase() === machine.split(".")[0]!.toLowerCase();
+
+  if (all) {
+    const hosts = await withDb(config, async (_db, sessions) => {
+      return sessions.aggregate([{ $group: { _id: "$machine" } }]).toArray();
+    });
+    console.log(`${machine.split(".")[0]!}:`);
+    await addLocal();
+    const remoteHosts = hosts.map((h) => h["_id"] as string)
+      .filter((h) => h.toLowerCase() !== machine.toLowerCase());
+    for (const h of remoteHosts) {
+      console.log(`\n${h.split(".")[0]!}:`);
+      const ok = await addRemote(h);
+      if (!ok) console.log(`  ${dim("unreachable")}`);
+    }
+  } else if (host && !isLocalHost(host)) {
+    await addRemote(host);
+  } else {
+    await addLocal();
+  }
+}
+
 async function cmdAgentStop(
   config: CsConfig,
   host: string | null,
   all: boolean
 ): Promise<void> {
   const machine = getHostname(config);
-  const agentSock = "$HOME/.ssh/cs-agent.sock";
+  const agentSock = CS_AGENT_SOCK_SH;
 
   const stopLocal = () => {
-    const sock = join(homedir(), ".ssh", "cs-agent.sock");
+    const sock = CS_AGENT_SOCK;
     Bun.spawnSync(["bash", "-c", `pkill -f "ssh-agent -a ${sock}" 2>/dev/null; rm -f "${sock}"`]);
   };
 
@@ -2095,6 +2191,7 @@ ${bold("Usage:")}
   cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
                                   Bulk hard delete (skips live named/tagged sessions)
   cs purge --orphans [--yes]      Remove ~/.claude/projects/ dirs whose project path is gone
+  cs add-key [--host <name>] [--all]  Reload SSH key into cs-agent (resets the key timer)
   cs agent stop [--host] [--all]  Stop SSH agent on host(s)
   cs update                       Update cs to latest version
   cs update --all                 Update cs on all known hosts via SSH
@@ -2151,6 +2248,21 @@ async function main(): Promise<void> {
       console.error("Usage: cs agent stop [--host <name>] [--all]");
       process.exit(1);
     }
+    return;
+  }
+
+  if (command === "add-key") {
+    let config: CsConfig;
+    try {
+      config = loadConfig();
+    } catch (err) {
+      if (err instanceof ConfigError) { console.error(err.message); process.exit(1); }
+      throw err;
+    }
+    const all = args.includes("--all");
+    const hostIdx = args.indexOf("--host");
+    const host = hostIdx >= 0 ? (args[hostIdx + 1] ?? null) : null;
+    await cmdAddKey(config, host, all);
     return;
   }
 
