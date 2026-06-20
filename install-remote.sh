@@ -103,6 +103,17 @@ elif [ "$(uname)" = "Darwin" ]; then
   if [ -f "$PLIST" ]; then
     echo "  LaunchAgent sync already configured"
   else
+    # Named wrapper so macOS Login Items lists this as "cs-sync", not "bash":
+    # BTM names background items from the program in the plist, so it must point
+    # at a distinctly named executable (not /bin/bash -c …).
+    WRAPPER="$HOME/.local/bin/cs-sync"
+    cat > "$WRAPPER" << 'WEOF'
+#!/bin/bash
+# cs sync helper — named so macOS Login Items shows "cs-sync", not "bash".
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:$PATH"
+exec cs sync --quiet
+WEOF
+    chmod 755 "$WRAPPER"
     mkdir -p "$HOME/Library/LaunchAgents"
     cat > "$PLIST" << PEOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -113,9 +124,7 @@ elif [ "$(uname)" = "Darwin" ]; then
     <string>$LABEL</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>-c</string>
-        <string>PATH="\$HOME/.local/bin:\$HOME/.bun/bin:/opt/homebrew/bin:\$PATH" cs sync --quiet 2>/dev/null</string>
+        <string>$WRAPPER</string>
     </array>
     <key>StartInterval</key>
     <integer>300</integer>
@@ -129,7 +138,7 @@ elif [ "$(uname)" = "Darwin" ]; then
 </plist>
 PEOF
     launchctl load "$PLIST" 2>/dev/null
-    echo "  Added LaunchAgent: sync every 5 minutes"
+    echo "  Added LaunchAgent: sync every 5 minutes (cs-sync)"
   fi
 else
   # Linux: use crontab

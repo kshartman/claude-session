@@ -2005,6 +2005,17 @@ function ensureCron(): void {
       const plistPath = join(homedir(), "Library", "LaunchAgents", `${label}.plist`);
       if (existsSync(plistPath)) return;
 
+      // Named wrapper so macOS Login Items lists this agent as "cs-sync" rather
+      // than "bash": BTM names background items by static inspection of the
+      // program in the plist, so ProgramArguments[0] must be a distinctly named
+      // executable (not /bin/bash -c …).
+      const wrapperPath = join(homedir(), ".local", "bin", "cs-sync");
+      const wrapper = `#!/bin/bash
+# cs sync helper — named so macOS Login Items shows "cs-sync", not "bash".
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:$PATH"
+exec cs sync --quiet
+`;
+
       const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -2013,9 +2024,7 @@ function ensureCron(): void {
     <string>${label}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>-c</string>
-        <string>PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:$PATH" cs sync --quiet 2>/dev/null</string>
+        <string>${wrapperPath}</string>
     </array>
     <key>StartInterval</key>
     <integer>300</integer>
@@ -2029,6 +2038,9 @@ function ensureCron(): void {
 </plist>`;
 
       try {
+        mkdirSync(join(homedir(), ".local", "bin"), { recursive: true });
+        writeFileSync(wrapperPath, wrapper);
+        chmodSync(wrapperPath, 0o755);
         mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
         writeFileSync(plistPath, plist);
         Bun.spawnSync(["launchctl", "load", plistPath]);

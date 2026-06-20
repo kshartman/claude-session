@@ -28470,7 +28470,7 @@ import { homedir as homedir2 } from "os";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.8.0";
+var VERSION = "1.8.1";
 var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -30278,6 +30278,12 @@ function ensureCron() {
       const plistPath = join2(homedir2(), "Library", "LaunchAgents", `${label}.plist`);
       if (existsSync2(plistPath))
         return;
+      const wrapperPath = join2(homedir2(), ".local", "bin", "cs-sync");
+      const wrapper = `#!/bin/bash
+# cs sync helper \u2014 named so macOS Login Items shows "cs-sync", not "bash".
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:$PATH"
+exec cs sync --quiet
+`;
       const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -30286,9 +30292,7 @@ function ensureCron() {
     <string>${label}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>-c</string>
-        <string>PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:$PATH" cs sync --quiet 2>/dev/null</string>
+        <string>${wrapperPath}</string>
     </array>
     <key>StartInterval</key>
     <integer>300</integer>
@@ -30301,6 +30305,9 @@ function ensureCron() {
 </dict>
 </plist>`;
       try {
+        mkdirSync(join2(homedir2(), ".local", "bin"), { recursive: true });
+        writeFileSync(wrapperPath, wrapper);
+        chmodSync(wrapperPath, 493);
         mkdirSync(join2(homedir2(), "Library", "LaunchAgents"), { recursive: true });
         writeFileSync(plistPath, plist);
         Bun.spawnSync(["launchctl", "load", plistPath]);
