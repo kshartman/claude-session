@@ -197,7 +197,10 @@ cs deleted                      # list soft-deleted sessions
 cs gc                           # list duplicate sessions (same project+host, older ones)
 cs gc --yes                     # soft-delete the duplicates
 
-cs purge <pattern> [--yes]      # hard delete session + local files (irreversible)
+cs purge <pattern>... [--yes]   # hard delete session(s) + local files (irreversible)
+                                # accepts multiple ids/names: cs purge --yes s1 s2 s3
+                                # each resolved independently; unresolved ones are
+                                # reported and skipped, not fatal to the batch
 cs purge <pattern> --all [--yes] [--host <h>] [--deleted]
                                 # bulk hard delete matching sessions
                                 # skips live /rename'd or tagged sessions unless already soft-deleted
@@ -324,8 +327,16 @@ curl -sSL https://raw.githubusercontent.com/kshartman/claude-session/main/instal
 ### Build bundle
 
 ```
-bun run build   # produces cs.bundle.js
+bun run build   # produces cs.bundle.js + cs.bundle.js.sha256
 ```
+
+Build also writes `cs.bundle.js.sha256` (sha256sum format). Both files are
+published to the repo root. `cs update` and `install-remote.sh` fetch the
+checksum and verify the downloaded bundle before it replaces the running binary —
+a missing, malformed, or mismatched checksum aborts (fail closed), so a repo
+compromise or truncated download can't silently install a bad bundle. Any release
+that ships `cs.bundle.js` MUST ship the matching `cs.bundle.js.sha256` (the build
+chains them, so just run `bun run build`).
 
 ## What NOT to Build
 

@@ -28465,12 +28465,13 @@ import {
 } from "fs";
 import { join as join2, basename } from "path";
 import { homedir as homedir2 } from "os";
+import { createHash } from "crypto";
 
 // lib.ts
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.8.1";
+var VERSION = "1.9.0";
 var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29858,44 +29859,62 @@ function purgeOneSession(session, claudeDir) {
   }
   return { jsonlPath, sessionDir, deleted };
 }
-async function cmdPurge(config, pattern, confirm, all, host, deletedOnly) {
+async function cmdPurge(config, patterns, confirm, all, host, deletedOnly) {
   const machine = getHostname(config);
   const claudeDir = join2(homedir2(), ".claude", "projects");
+  const label = patterns.join(", ");
   await withDb(config, async (_db, sessions) => {
     let matches;
     if (all) {
-      matches = await sessions.find(purgeBulkFilter(pattern, { host, deletedOnly })).toArray();
+      matches = await sessions.find(purgeBulkFilter(patterns[0] ?? "*", { host, deletedOnly })).toArray();
     } else {
-      const found = await sessions.find({ $or: [
-        { session_id: { $regex: `^${escapeRegex(pattern)}` } },
-        { title: pattern },
-        { project_name: pattern },
-        { title: { $regex: `^${escapeRegex(pattern)}`, $options: "i" } }
-      ] }).toArray();
-      let filtered = found.filter((r) => r.session_id.startsWith(pattern));
-      if (filtered.length === 0)
-        filtered = found;
-      if (filtered.length === 0) {
-        console.error(`No session found matching '${pattern}'`);
-        process.exit(1);
-      }
-      if (filtered.length > 1) {
-        const local = filtered.filter((m) => m.machine.toLowerCase() === machine.toLowerCase());
-        if (local.length === 1) {
-          matches = local;
-        } else {
-          console.error(`Ambiguous match for '${pattern}'. Did you mean:`);
-          for (const m of filtered) {
-            console.error(`  ${m.project_name}  ${m.session_id}  ${m.machine}  ${m.title ?? ""}`);
-          }
-          process.exit(1);
+      const seen = new Set;
+      matches = [];
+      let anyUnresolved = false;
+      for (const pattern of patterns) {
+        const found = await sessions.find({ $or: [
+          { session_id: { $regex: `^${escapeRegex(pattern)}` } },
+          { title: pattern },
+          { project_name: pattern },
+          { title: { $regex: `^${escapeRegex(pattern)}`, $options: "i" } }
+        ] }).toArray();
+        let filtered = found.filter((r) => r.session_id.startsWith(pattern));
+        if (filtered.length === 0)
+          filtered = found;
+        if (filtered.length === 0) {
+          console.error(`No session found matching '${pattern}'`);
+          anyUnresolved = true;
+          continue;
         }
-      } else {
-        matches = filtered;
+        let resolved;
+        if (filtered.length > 1) {
+          const local = filtered.filter((m) => m.machine.toLowerCase() === machine.toLowerCase());
+          if (local.length === 1) {
+            resolved = local;
+          } else {
+            console.error(`Ambiguous match for '${pattern}'. Did you mean:`);
+            for (const m of filtered) {
+              console.error(`  ${m.project_name}  ${m.session_id}  ${m.machine}  ${m.title ?? ""}`);
+            }
+            anyUnresolved = true;
+            continue;
+          }
+        } else {
+          resolved = filtered;
+        }
+        for (const m of resolved) {
+          const key = `${m.session_id}\x00${m.machine}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            matches.push(m);
+          }
+        }
       }
+      if (matches.length === 0 && anyUnresolved)
+        process.exit(1);
     }
     if (matches.length === 0) {
-      console.log(`No sessions matching '${pattern}' on this host.`);
+      console.log(`No sessions matching '${label}' on this host.`);
       return;
     }
     const nonLocal = matches.filter((m) => m.machine.toLowerCase() !== machine.toLowerCase());
@@ -29906,7 +29925,7 @@ async function cmdPurge(config, pattern, confirm, all, host, deletedOnly) {
         process.exit(1);
       matches = localOnly;
     }
-    console.log(`${all ? "Bulk purge" : "Purge"} ${matches.length} session(s) matching '${pattern}':
+    console.log(`${all ? "Bulk purge" : "Purge"} ${matches.length} session(s) matching '${label}':
 `);
     for (const s of matches) {
       const pathHash = encodePathHash(s.project_path);
@@ -30349,13 +30368,32 @@ async function cmdUpdate(force = false) {
     return;
   }
   console.log(force && remoteVersion === VERSION ? `Force updating cs v${VERSION}...` : `Updating cs v${VERSION} \u2192 v${remoteVersion}...`);
+  let expectedHash;
+  try {
+    const resp = await fetch(`${getBaseUrl()}/cs.bundle.js.sha256`);
+    if (!resp.ok)
+      throw new Error(`HTTP ${resp.status}`);
+    expectedHash = ((await resp.text()).trim().split(/\s+/)[0] ?? "").toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(expectedHash))
+      throw new Error("malformed checksum");
+  } catch (err) {
+    console.error(`Refusing to update: could not fetch a valid bundle checksum (${err}).`);
+    process.exit(1);
+  }
   const binPath = `${homedir2()}/.local/bin/cs`;
   try {
     const resp = await fetch(`${getBaseUrl()}/cs.bundle.js`);
     if (!resp.ok)
       throw new Error(`HTTP ${resp.status}`);
-    const content = await resp.text();
-    await Bun.write(binPath, content);
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const actualHash = createHash("sha256").update(buf).digest("hex");
+    if (actualHash !== expectedHash) {
+      console.error(`Refusing to update: bundle checksum mismatch \u2014 not installing.
+` + `  expected ${expectedHash}
+  actual   ${actualHash}`);
+      process.exit(1);
+    }
+    await Bun.write(binPath, buf);
     chmodSync(binPath, 493);
   } catch (err) {
     console.error(`Failed to download bundle: ${err}`);
@@ -30447,7 +30485,7 @@ ${bold("Usage:")}
   cs deleted                      List soft-deleted sessions
   cs gc                           List duplicate sessions (same project+host, older ones)
   cs gc --yes                     Soft-delete the duplicates
-  cs purge <pattern> [--yes]      Hard delete one session + local files (irreversible)
+  cs purge <pattern>... [--yes]   Hard delete one or more sessions + local files (irreversible)
   cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
                                   Bulk hard delete (skips live named/tagged sessions)
   cs purge --orphans [--yes]      Remove ~/.claude/projects/ dirs whose project path is gone
@@ -30689,12 +30727,17 @@ async function main() {
       const deletedOnly = args.includes("--deleted");
       const hostIdx = args.indexOf("--host");
       const purgeHost = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
-      const pattern = args.filter((a) => !a.startsWith("--") && a !== purgeHost)[1] ?? (all ? "*" : null);
-      if (!pattern) {
-        console.error("Usage: cs purge <pattern> [--yes] [--all] [--host <name>] [--deleted]");
+      const positionals = args.slice(1).filter((a) => !a.startsWith("--") && a !== purgeHost);
+      if (all && positionals.length > 1) {
+        console.error("cs purge --all takes a single pattern. To purge specific sessions, list them without --all: cs purge <s1> <s2> ...");
         process.exit(1);
       }
-      await cmdPurge(config, pattern, yes, all, purgeHost, deletedOnly);
+      const patterns = positionals.length > 0 ? positionals : all ? ["*"] : [];
+      if (patterns.length === 0) {
+        console.error("Usage: cs purge <pattern> [<pattern>...] [--yes] [--all] [--host <name>] [--deleted]");
+        process.exit(1);
+      }
+      await cmdPurge(config, patterns, yes, all, purgeHost, deletedOnly);
       break;
     }
     default:

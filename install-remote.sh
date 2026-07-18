@@ -56,8 +56,34 @@ echo "  $(tmux -V)"
 mkdir -p "$BIN_DIR"
 echo "Downloading cs..."
 curl -sSL "$BUNDLE_URL" -o "$BIN_DIR/cs"
+
+# Verify the bundle against its published checksum before trusting it. Fail
+# closed: a missing/malformed checksum or a mismatch aborts the install and
+# removes the unverified download.
+EXPECTED=$(curl -sSL "$CS_REPO_URL/cs.bundle.js.sha256" | awk '{print $1}')
+if ! printf '%s' "$EXPECTED" | grep -qiE '^[0-9a-f]{64}$'; then
+  echo "ERROR: could not fetch a valid bundle checksum — aborting."
+  rm -f "$BIN_DIR/cs"
+  exit 1
+fi
+if command -v sha256sum &>/dev/null; then
+  ACTUAL=$(sha256sum "$BIN_DIR/cs" | awk '{print $1}')
+elif command -v shasum &>/dev/null; then
+  ACTUAL=$(shasum -a 256 "$BIN_DIR/cs" | awk '{print $1}')
+else
+  echo "ERROR: no sha256 tool (sha256sum/shasum) to verify the bundle — aborting."
+  rm -f "$BIN_DIR/cs"
+  exit 1
+fi
+if [ "$(printf '%s' "$EXPECTED" | tr 'A-F' 'a-f')" != "$(printf '%s' "$ACTUAL" | tr 'A-F' 'a-f')" ]; then
+  echo "ERROR: bundle checksum mismatch — aborting."
+  echo "  expected $EXPECTED"
+  echo "  actual   $ACTUAL"
+  rm -f "$BIN_DIR/cs"
+  exit 1
+fi
 chmod +x "$BIN_DIR/cs"
-echo "  Installed to $BIN_DIR/cs"
+echo "  Installed to $BIN_DIR/cs (checksum verified)"
 
 # Download man page
 mkdir -p "$MAN_DIR"

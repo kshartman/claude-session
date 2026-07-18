@@ -168,9 +168,12 @@ or
 whose first message is a system tag, not real user input. Sync also
 skips orphans automatically.
 .TP
-.BI "cs purge" " pattern [--yes] [--all] [--host name] [--deleted]"
+.BI "cs purge" " pattern... [--yes] [--all] [--host name] [--deleted]"
 Hard delete sessions. Removes MongoDB records, JSONL files, and session
-directories. Without
+directories. In single\-target mode, multiple ids/names may be listed
+.RB ( "cs purge --yes s1 s2 s3" );
+each is resolved independently and an unresolved one is reported and skipped
+rather than aborting the batch. Without
 .BR --yes ,
 shows what would be deleted. With
 .BR --all ,
@@ -224,7 +227,10 @@ Use this to remove loaded keys from memory.
 .TP
 .B cs update [--force] [--all]
 Check for a new version on the remote server. If a newer version is available,
-downloads the updated bundle and man page. With
+downloads the updated bundle and man page. The bundle is verified against its
+published SHA\-256 checksum before it replaces the running binary; a missing,
+malformed, or mismatched checksum aborts the update and leaves the current
+binary untouched. With
 .BR --force ,
 re-downloads even when the version matches. With
 .BR --all ,

@@ -2,7 +2,7 @@
 
 // VERSION is canonical in the VERSION file; `bun run build` syncs this constant
 // via scripts/sync-version.ts. Edit the VERSION file, not this line.
-export const VERSION = "1.8.1";
+export const VERSION = "1.9.0";
 export const SCHEMA_VERSION = 2;
 
 export type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";
