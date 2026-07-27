@@ -12,7 +12,7 @@ On any machine with Bun and tmux:
 curl -sSL https://raw.githubusercontent.com/kshartman/claude-session/main/install-remote.sh | bash
 ```
 
-Installs Bun if missing (without modifying `.bashrc`), downloads the bundled JS to `~/.local/bin/cs`, sets up config and cron sync.
+Installs Bun if missing (without modifying `.bashrc`), downloads the bundled JS to `~/.local/bin/cs` — verifying it against its published SHA-256 checksum — and sets up config and cron sync.
 
 Options (pass via `bash -s --`):
 
@@ -46,7 +46,7 @@ cs          # see the dashboard
 
 **PATH requirement:** `bun`, `tmux`, and `claude` must be on PATH for **non-interactive** login shells (e.g., `ssh host 'which tmux'` must work). Remote attach and cron sync run without a terminal. If your PATH is set inside an interactive guard in `.bashrc`, move it to `.bash_profile` before the `.bashrc` source. This is especially important on macOS where Homebrew paths (`/opt/homebrew/bin`) may not be set for non-interactive shells.
 
-**SSH keys:** Each machine needs your SSH private key on disk. cs manages a persistent local agent (`~/.ssh/cs-agent.sock`) — no agent forwarding or dotfile configuration required.
+**SSH keys:** Each machine needs your SSH private key on disk. cs manages a persistent local agent (`~/.ssh/cs-agent.sock`) — no agent forwarding or dotfile configuration required. See [docs/ssh-agent-setup.md](docs/ssh-agent-setup.md) for the full agent model, timeout behavior, and options.
 
 ### Auto-sync
 
@@ -54,23 +54,30 @@ The installer sets up periodic sync every 5 minutes — crontab on Linux, Launch
 
 ## Commands
 
+<!-- BEGIN GENERATED COMMANDS — edit commands.ts, run: bun scripts/gen-docs.ts -->
 ### `cs [--sort [field]] [--orphans]`
 
-Show the local dashboard — a single merged table of this machine's sessions with live tmux state overlaid on database records. No duplicates. Works even if MongoDB is down (shows local tmux sessions only).
+Display the local dashboard: a single merged table of this machine's sessions with live tmux state overlaid on database records. No duplicates. Falls back to a tmux-only display if MongoDB is unreachable.
 
-Use `--orphans` to include untracked tmux sessions that are running Claude but have no database record (e.g., sessions started manually outside cs).
+With `--orphans`, also lists untracked tmux sessions that are running Claude but have no database record (e.g. sessions started manually outside cs).
 
-Use `--sort` to change the sort order. `--sort` alone sorts by title. Valid fields: `title`, `updated`, `host`, `project`. When a sort field is specified, ties are broken by the remaining fields in that order.
+Takes the same filter and sort options as `cs list`.
 
 ### `cs sync [--quiet]`
 
-Scan `~/.claude/projects/` for session files and upsert metadata to MongoDB. Detects tmux session states. Run this to keep the database current.
+Harvest session metadata from `~/.claude/projects/` and upsert it to MongoDB. Detects active tmux sessions and their state.
 
-`--quiet` suppresses output (for the `.bashrc` hook).
+With `--quiet`, suppresses all output — this is the form the periodic cron/LaunchAgent sync runs.
 
 ### `cs list [--local] [--host <name>] [--project <name>] [--limit <n>] [--sort [field]]`
 
-List sessions from the database. Defaults to all hosts, sorted by most recent.
+List sessions from the database, most recently updated first. Defaults to all hosts.
+
+- `--sort [field]` — Sort by `title`, `updated`, `host`, or `project` (`--sort` alone sorts by title). Ties are broken by the remaining fields in that order.
+- `--local` — Show sessions from this host only.
+- `--host <name>` — Filter to a specific host. Accepts short names (e.g. `dev` matches `dev.example.com`).
+- `--project <name>` — Filter by project name.
+- `--limit <n>` — Maximum number of results (default: 40).
 
 ```bash
 cs list                        # all hosts
@@ -83,18 +90,18 @@ cs list --sort project         # sort by project name
 
 ### `cs launch <project> [prompt]`
 
-Start Claude Code in a detached tmux session. The session survives SSH disconnects — Claude keeps working even if you close your terminal.
+Start Claude Code in a detached tmux session. The session survives SSH disconnects — Claude keeps working even if you close your terminal. If `prompt` is given, it is passed to Claude as the initial message.
+
+The output tells you the session name and how to reconnect.
 
 ```bash
 cs launch myproject
 cs launch myproject "fix the nginx config"
 ```
 
-The output tells you the session name and how to reconnect.
-
 ### `cs adopt <id-or-name> [--attach]`
 
-Wrap an existing Claude session in a managed tmux session. Use this to take a session you started normally and make it persistent.
+Wrap an existing Claude session in a managed tmux session — use this to take a session you started normally and make it persistent. The session is resumed via `claude --resume` inside a detached tmux. With `--attach`, connects immediately after adopting.
 
 ```bash
 cs adopt claude-session             # wrap in tmux, leave detached
@@ -104,7 +111,9 @@ cs adopt 952d --attach              # works with ID prefix too
 
 ### `cs attach <id-or-name> [--host <name>]`
 
-Reconnect to a session. Works **across machines** — if the session is on a different host, cs automatically SSH's there and creates the tmux session if needed.
+Reconnect to a session. If it is on the local machine, attaches to its tmux session directly; if you are already inside tmux, uses `switch-client` to avoid nesting. If it is on a remote machine, cs ssh's there, creates the tmux session if needed, and attaches. Requires SSH key authentication for remote sessions.
+
+Sessions can be identified by ID prefix (like git), `/rename` name (exact match), or project name. When ambiguous, cs prefers the local host's session; use `--host` to disambiguate explicitly.
 
 ```bash
 cs attach claude-session    # by /rename name
@@ -113,13 +122,9 @@ cs attach a4b9              # remote session — auto-SSH
 cs attach myapp --host dev  # disambiguate when same name on multiple hosts
 ```
 
-You can use a session ID prefix (like git), a `/rename` name (exact match), or a project name. If ambiguous, cs prefers the local host's session. Use `--host` to override.
-
-If you're already inside tmux, cs uses `switch-client` instead of nesting.
-
 ### `cs kill <id-or-name> [--host <name>]`
 
-Terminate a tmux session, local or remote. Updates MongoDB state immediately.
+Terminate a tmux session, local or remote via SSH. Updates the session state in MongoDB immediately. With `--all`, kills every active session, optionally filtered to one host.
 
 ```bash
 cs kill claude-session            # kill by name
@@ -129,46 +134,46 @@ cs kill --all                     # kill all sessions everywhere
 cs kill --all --host dev          # kill all sessions on dev
 ```
 
+### `cs kill --all [--host <name>]`
+
+Kill all active sessions. Optionally filter to a specific host.
+
 ### `cs resume`
 
-Interactive session picker using fzf. Select a session and jump straight into `claude --resume`.
+Interactive session picker using fzf. Displays recent sessions from the current machine and launches `claude --resume` for the one you select.
 
 ### `cs last`
 
-Resume the most recent session on this machine. No picker, no questions — straight to Claude.
+Resume the most recent session on this machine — no picker, straight to Claude. Equivalent to selecting the first item in `cs resume`.
 
 ### `cs status`
 
-Live view of all active tmux sessions on this machine with their current state:
+Display the live state of every active cs tmux session on this machine. Reads tmux directly; does not require MongoDB.
 
-- **WORKING** (green) — Claude is actively generating
-- **WAITING** (yellow) — Claude needs input or permission
-- **IDLE** (dim) — session is alive but quiet
-- **DEAD** (red) — tmux session no longer exists
+- **WORKING** — (green) Claude is actively generating output.
+- **WAITING** — (yellow) Claude is waiting for user input or permission.
+- **IDLE** — (dim) Session is alive but has no recent activity.
+- **DEAD** — (red) tmux session no longer exists.
 
-This command reads tmux directly — no MongoDB needed.
+### `cs tag <id-or-name> <label>`
 
-### `cs tag <id-prefix> <label>`
-
-Label a session for easy identification.
+Apply a text label to a session for easy identification. Tags are stored in MongoDB and shown in `cs list` output.
 
 ```bash
 cs tag 952d auth-refactor
 ```
 
-Tags are stored in MongoDB and show up in `cs list`.
+### `cs info <id-or-name>`
 
-### `cs info <id-prefix>`
-
-Full details for a single session: ID, machine, project, title, `/rename` name (if any), tag, state, message count, timestamps, and schema version.
+Display the full record for a single session: session ID, machine, project path, title, `/rename` name (if any), tag, state, message count, timestamps, tmux session name, summary, and schema version.
 
 ### `cs hosts`
 
-List all hosts that have synced sessions, with session counts and when each was last seen.
+List every host that has synced sessions, with session counts and when each was last seen.
 
 ### `cs rm <id-or-name>`
 
-Soft-delete a session from MongoDB. It won't appear in listings or the dashboard, and `cs sync` won't bring it back.
+Soft-delete a session: the record is marked with a `deleted_at` timestamp, so it no longer appears in listings, queries, or sync — and `cs sync` will not bring it back. Local files are untouched. `cs rm --undo` restores it.
 
 ```bash
 cs rm "=c"                     # remove junk session by title
@@ -176,9 +181,13 @@ cs rm 262a                     # remove by ID prefix
 cs rm --undo 262a              # restore a soft-deleted session
 ```
 
+### `cs rm --undo <id-or-name>`
+
+Restore a soft-deleted session.
+
 ### `cs prune [--days N] [--all]`
 
-Bulk soft-delete sessions that have no `/rename` name and no tag. Default threshold is 30 days.
+Bulk soft-delete sessions that have no `/rename` name and no tag. Default threshold is 30 days; `--all` prunes regardless of age. **Named and tagged sessions are never pruned.**
 
 ```bash
 cs prune                       # remove unnamed/untagged older than 30 days
@@ -186,32 +195,33 @@ cs prune --days 7              # older than 7 days
 cs prune --all                 # all unnamed/untagged regardless of age
 ```
 
-Named and tagged sessions are never pruned.
-
 ### `cs deleted [--local] [--host <name>]`
 
-List soft-deleted sessions. Defaults to all hosts. Use `cs rm --undo <id>` to restore any of them.
+List soft-deleted sessions with their deletion timestamps. Defaults to all hosts. Restore any of them with `cs rm --undo <id>`.
 
 ### `cs gc [--yes]`
 
-Find and purge compact/clear orphan sessions. When Claude Code runs `/compact` or `/clear`, it creates a new session file whose first message is a system tag — not a real conversation. These orphans clutter your session list.
+Collapse duplicate sessions. Sessions are grouped by project and host; the most recently updated one in each group is kept and the older ones become GC candidates. Without `--yes`, shows what would be removed.
+
+This is a soft-delete — no local files are touched, and anything removed can be restored with `cs rm --undo <id>`.
 
 ```bash
-cs gc                          # preview orphans found on this machine
-cs gc --yes                    # purge them (files + MongoDB records)
+cs gc                          # preview the duplicates that would be removed
+cs gc --yes                    # soft-delete them
 ```
 
-Sync also skips orphans automatically, so they won't re-enter MongoDB after a gc.
+### `cs purge <pattern>... [--yes] [--all] [--host <name>] [--deleted]`
 
-### `cs purge <pattern> [--yes] [--all] [--host <name>] [--deleted]`
+Hard delete sessions — removes MongoDB records, JSONL files, and session directories. **Irreversible.** Without `--yes`, shows what would be deleted. Must be run on the host where the sessions live.
 
-Hard delete sessions — removes MongoDB records, JSONL files, and session directories. Irreversible. Without `--yes`, shows what would be deleted. Must be run on the host where sessions live.
+Several sessions can be named at once (`cs purge --yes s1 s2 s3`). Each is resolved independently; one that does not resolve is reported and skipped rather than aborting the batch.
 
-Bulk mode (`--all`) **skips live `/rename`d or tagged sessions** unless they've already been soft-deleted — a wildcard can't silently destroy a session you named or tagged. To purge one anyway, target it explicitly (`cs purge <name> --yes`) or soft-delete it first.
+With `--all`, bulk deletes matching sessions (requires typed `YES` confirmation). Bulk mode **skips live `/rename`d or tagged sessions** unless they have already been soft-deleted — a wildcard cannot silently destroy a session you named or tagged. To purge one anyway, target it explicitly or soft-delete it first. With `--deleted`, targets only soft-deleted sessions.
 
 ```bash
 cs purge 952d                      # preview single session purge
 cs purge 952d --yes                # purge one session
+cs purge --yes 952d a4b9 262a      # purge several at once
 cs purge agent --all --yes         # bulk purge all matching "agent"
 cs purge --all --deleted --yes     # purge all soft-deleted sessions
 cs purge --all --host dev --yes    # purge all sessions on dev
@@ -219,33 +229,45 @@ cs purge --all --host dev --yes    # purge all sessions on dev
 
 ### `cs purge --orphans [--yes]`
 
-Remove orphaned local state — `~/.claude/projects/` directories whose decoded
-project path no longer exists on disk (so `cs sync` skips them with a
-`cannot decode path` warning), plus DB records on this host pointing at a
-missing project path. This is the cleanup for the cruft those skip-warnings
-flag. Local-only and irreversible; without `--yes` it just lists what it found.
-Removing more than one item also requires a typed `YES`, same as `purge --all`.
+Remove orphaned local state on this machine: `~/.claude/projects/` directories whose decoded project path no longer exists on disk (the dirs `cs sync` skips with a `cannot decode path` warning), plus DB records on this host that point at a missing project path. This is the cleanup for the cruft those skip-warnings flag.
 
-Honors the same keep-signal guard as bulk purge: a **live `/rename`d or tagged**
-session whose project path is gone (e.g. a transiently unmounted drive) is
-listed but **kept** — single-target `cs purge <name>` to remove one.
+Without `--yes`, lists what was found; removing more than one item also requires a typed `YES`, same as `purge --all`.
+
+Honors the same keep-signal guard as bulk purge: a **live `/rename`d or tagged** session whose project path is gone (e.g. a transiently unmounted drive) is listed but **kept** — target it explicitly with `cs purge <name>` to remove it. Local-only and irreversible.
 
 ```bash
 cs purge --orphans                 # preview orphaned dirs + stale records
 cs purge --orphans --yes           # remove them
 ```
 
-### `cs update [--force] [--all]`
+### `cs add-key [--host <name>] [--all]`
 
-Check for a new version and update in place. `--force` re-downloads even when the version matches. `--all` updates all known hosts via SSH. Also installs cron sync if not set up (unless `noCron` in config).
+Load your SSH key into the shared cs agent and reset its lifetime, prompting for the passphrase if needed. The agent is started only when its socket is dead; a live agent is never killed.
+
+Every cs session on a host shares one agent, so a single call covers all of them — run it when the key timer has expired and SSH starts failing. `--host` runs it on a remote host; `--all` on every known host.
+
+```bash
+cs add-key                 # this machine
+cs add-key --host dev      # a specific host
+cs add-key --all           # every known host
+```
 
 ### `cs agent stop [--host <name>] [--all]`
 
-Kill the persistent SSH agent on one or all machines. Useful when you're done for the day and want keys removed from memory.
+Kill the persistent SSH agent on one or all machines — useful when you are done for the day and want keys out of memory. The agent runs at `~/.ssh/cs-agent.sock` and is started automatically by `cs attach`.
 
-### `cs version`
+Because the agent is shared, stopping it cuts SSH access for every cs session on that host at once.
 
-Print the current version.
+### `cs update [--force] [--all]`
+
+Check for a new version on the remote server and, if one is available, download the updated bundle and man page. `--force` re-downloads even when the version matches; `--all` updates all known hosts via SSH after updating locally. Also installs the periodic sync if it is not set up (unless `noCron` is set in config).
+
+The downloaded bundle is verified against its published SHA-256 checksum before it replaces the running binary. A missing, malformed, or mismatched checksum aborts the update and leaves the current binary untouched.
+
+### `cs version`, `--version`
+
+Print the current version and exit.
+<!-- END GENERATED COMMANDS -->
 
 ## How it works
 
@@ -290,7 +312,7 @@ Config lives at `~/.config/cs/config.json`:
 | `noCron` | `false` | Disable automatic cron sync setup on install and update |
 | `remotePath` | `$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin` | Extra PATH entries for remote SSH commands (tmux, claude) |
 | `agentKeyTimeout` | `28800` (8h) | How long SSH keys stay loaded in the agent (seconds) |
-| `agentKeyFile` | `~/.ssh/id_ed25519` | Which SSH private key to load into the agent |
+| `agentKeyFile` | (unset) | Which SSH private key to load into the agent. Unset means plain `ssh-add`, i.e. ssh's default key set. Supports `~`. |
 | `hostname` | `os.hostname()` | Override the stored hostname. Use when `os.hostname()` changes (e.g., short name → FQDN) to keep records consistent. Sync auto-migrates old records. |
 | `repoUrl` | GitHub repo URL | Override the base URL for update/install downloads |
 

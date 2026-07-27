@@ -137,91 +137,14 @@ produce `null` (not an error).
 
 ## Commands
 
-```
-cs [--sort [field]] [--orphans]  # local dashboard: merged tmux + DB table for this machine
-                                # live state overlaid, deduped, silent DB fallback
-                                # --sort: title (default), updated, host, project
-                                # --orphans: show untracked tmux sessions running claude
+The command surface is **not** documented here — `commands.ts` is the single
+source of truth for it. `cs --help` renders from that table at runtime, and
+`bun scripts/gen-docs.ts` renders the COMMANDS section of `cs.1` and the
+`## Commands` section of `README.md` from it at build time.
 
-cs sync [--quiet]               # harvest ~/.claude/projects/ → upsert to MongoDB
-                                # detect tmux sessions and update state
-                                # --quiet suppresses output (for cron/launchctl)
-
-cs list [--local] [--host <h>] [--project <name>] [--limit <n>] [--sort [field]]
-                                # default: all hosts, sorted by updated_at desc
-                                # --local: this host only
-                                # --sort: title (default), updated, host, project
-                                # output: table with columns:
-                                #   MACHINE | PROJECT | TITLE | TAG | STATE | UPDATED | ID
-
-cs launch <project> [prompt]    # start Claude in a detached tmux session
-                                # optional initial prompt
-
-cs adopt <id-or-name> [--attach]
-                                # wrap existing session in managed tmux
-                                # --attach: connect immediately after adopting
-
-cs attach <id-or-name> [--host <h>]
-                                # reconnect to a tmux-backed session
-                                # auto-detects local vs remote from MongoDB
-                                # local: tmux attach-session -t <name>
-                                # local (inside tmux): tmux switch-client -t <name>
-                                # remote: ssh <machine> -t tmux attach -t <name>
-                                # accepts: ID prefix, /rename name, or project name
-                                # ambiguous: prefers local host, or use --host to pick
-
-cs kill <id-or-name> [--host <h>]
-                                # terminate a tmux session (local or remote)
-cs kill --all [--host <h>]      # kill all sessions
-
-cs resume                       # fzf-style interactive picker → claude --resume
-
-cs last                         # resume most recent session on this machine
-                                # no picker, straight to claude --resume
-
-cs status                       # live state of all tmux-backed sessions on this machine
-                                # color-coded: green=WORKING, yellow=WAITING, dim=IDLE, red=DEAD
-
-cs tag <id-or-name> <label>     # tag a session in MongoDB
-
-cs info <id-or-name>            # show full record for one session
-
-cs hosts                     # list distinct machines with session counts and last seen
-
-cs rm <id-or-name>              # soft-delete a session (sync won't bring it back)
-cs rm --undo <id-or-name>       # restore a soft-deleted session
-cs prune [--days N] [--all]     # bulk soft-delete unnamed/untagged sessions
-                                # never touches /rename'd (agent_name) or tagged sessions
-cs deleted                      # list soft-deleted sessions
-
-cs gc                           # list duplicate sessions (same project+host, older ones)
-cs gc --yes                     # soft-delete the duplicates
-
-cs purge <pattern>... [--yes]   # hard delete session(s) + local files (irreversible)
-                                # accepts multiple ids/names: cs purge --yes s1 s2 s3
-                                # each resolved independently; unresolved ones are
-                                # reported and skipped, not fatal to the batch
-cs purge <pattern> --all [--yes] [--host <h>] [--deleted]
-                                # bulk hard delete matching sessions
-                                # skips live /rename'd or tagged sessions unless already soft-deleted
-cs purge --orphans [--yes]      # remove ~/.claude/projects/ dirs whose project path is gone
-                                # (the dirs sync skips) + stale DB records on this host
-                                # skips live /rename'd or tagged sessions (keep-signal guard)
-
-cs add-key [--host <h>] [--all] # reload SSH key into the shared cs-agent,
-                                # resetting its lifetime (key timer). One call
-                                # covers every session on the host (they share
-                                # the one agent). --host runs it on a remote
-                                # host; --all does every known host.
-cs agent stop [--host <h>] [--all]  # stop SSH agent on host(s); kills the
-                                # shared cs-agent so all cs sessions on the host
-                                # lose SSH access at once
-
-cs update                       # check for new version and update in place
-cs update --force               # re-download even if version matches
-cs update --all                 # update all known hosts via SSH
-cs version                      # print current version
-```
+To see the current surface: `cs --help`, `man cs`, or read `commands.ts`.
+To change it: edit `commands.ts` (and the implementation in `cs.ts`), then run
+`bun run docs`. `bun run check` fails if the generated docs have drifted.
 
 ## Color Output
 
@@ -252,7 +175,7 @@ to it. Until then, monitor after Claude Code updates.
 
 ## Code Structure
 
-Two TypeScript files:
+Source layout:
 
 - **`lib.ts`** — Pure functions and typed interfaces (testable, no side effects):
   ```
@@ -276,10 +199,25 @@ Two TypeScript files:
   // --- tmux (shell commands) ---
   // --- sync ---
   // --- commands ---
+  // --- usage ---
   // --- main / dispatch ---
   ```
 
+- **`commands.ts`** — The command reference as data: synopsis, summary, prose,
+  options, examples. Read at runtime by `printUsage()` and at build time by
+  `scripts/gen-docs.ts`. Static table, no logic.
+
 - **`lib.test.ts`** — Unit tests for lib.ts (run via `bun test`)
+
+- **`integration.test.ts`** — DB-backed tests for the prune/purge keep/destroy
+  matrix (server-evaluated filters). Reads `CS_TEST_MONGO_URI` or a gitignored
+  `.test-mongo-uri`; skips cleanly when neither is set.
+
+- **`scripts/`** — `sync-version.ts` (VERSION → lib.ts + package.json + the
+  `.TH` header of cs.1), `gen-docs.ts` (commands.ts → cs.1 + README.md), and
+  `checksum.ts` (bundle → `cs.bundle.js.sha256`). All three are chained by
+  `bun run build`; the first two also run under `bun run check` in `--check`
+  mode, which fails on drift instead of writing.
 
 No class hierarchies needed. Pure functions, typed interfaces, top-level async main.
 
@@ -321,8 +259,11 @@ curl -sSL https://raw.githubusercontent.com/kshartman/claude-session/main/instal
 3. Creates `~/.config/cs/` (chmod 700) and stubs `config.json` (chmod 600) if not present
 4. Runs `bun install` for dependencies
 5. Symlinks `cs.ts` to `~/.local/bin/cs`
-6. Creates MongoDB indexes on first run
-7. Sets up periodic sync (crontab on Linux, LaunchAgent on macOS)
+
+`install.sh` stops there. Indexes are created by cs itself on first DB use
+(`ensureIndexes`), and periodic sync is registered by `install-remote.sh` or by
+running `cs update` once (`ensureCron` — crontab on Linux, LaunchAgent on macOS,
+skipped when `noCron` is set).
 
 ### Build bundle
 
@@ -337,6 +278,20 @@ a missing, malformed, or mismatched checksum aborts (fail closed), so a repo
 compromise or truncated download can't silently install a bad bundle. Any release
 that ships `cs.bundle.js` MUST ship the matching `cs.bundle.js.sha256` (the build
 chains them, so just run `bun run build`).
+
+`bun run build` also stamps the version into `lib.ts`, `package.json`, and the
+`.TH` header of `cs.1`; `bun run check` fails on drift.
+
+### Changing the CLI surface
+
+Edit `commands.ts`, then run `bun run docs` (or `bun run build`, which chains
+it). `cs --help`, the COMMANDS section of `cs.1`, and the `## Commands` section
+of `README.md` all render from that one table, so they cannot disagree.
+
+This used to be four hand-maintained copies, which is how `cs gc` shipped three
+stale descriptions after v1.5.2 redefined it. Do not reintroduce a hand-written
+command list — `bun run check` fails when the generated blocks drift from
+`commands.ts`.
 
 ## What NOT to Build
 

@@ -1,12 +1,13 @@
 {
   "name": "cs",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "type": "module",
   "scripts": {
     "test": "bun test",
-    "check": "bun x tsc --noEmit && bun scripts/sync-version.ts --check",
+    "check": "bun x tsc --noEmit && bun scripts/sync-version.ts --check && bun scripts/gen-docs.ts --check",
     "version:check": "bun scripts/sync-version.ts --check",
-    "build": "bun scripts/sync-version.ts && bun build cs.ts --outfile cs.bundle.js --target bun && bun scripts/checksum.ts"
+    "docs": "bun scripts/gen-docs.ts",
+    "build": "bun scripts/sync-version.ts && bun scripts/gen-docs.ts && bun build cs.ts --outfile cs.bundle.js --target bun && bun scripts/checksum.ts"
   },
   "dependencies": {
     "mongodb": "^6.12.0"

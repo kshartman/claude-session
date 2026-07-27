@@ -68,7 +68,7 @@ echo "Setup complete! Next steps:"
 echo
 echo "  1. Edit $CONFIG_FILE with your MongoDB password"
 echo "  2. Run 'cs sync' to import existing sessions"
-echo "  3. Add to .bashrc for auto-sync on login:"
-echo "     echo 'cs sync --quiet &' >> ~/.bashrc"
+echo "  3. Run 'cs update' once to register the 5-minute periodic sync"
+echo "     (cron on Linux, LaunchAgent on macOS; skipped if noCron is set)"
 echo
 echo "Run 'cs --help' for usage."

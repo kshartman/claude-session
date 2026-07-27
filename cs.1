@@ -1,4 +1,4 @@
-.TH CS 1 "2026-03-20" "cs 1.0.0" "Claude Session Manager"
+.TH CS 1 "2026-07-27" "cs 1.9.1" "Claude Session Manager"
 .SH NAME
 cs \- manage Claude Code sessions across multiple hosts
 .SH SYNOPSIS
@@ -24,100 +24,102 @@ Running
 with no arguments displays a smart dashboard showing active sessions, recent
 activity, and sessions needing attention.
 .SH COMMANDS
+.\" BEGIN GENERATED COMMANDS — edit commands.ts, run: bun scripts/gen-docs.ts
 .TP
-.B cs
-Display the local dashboard. Shows a single merged table of this machine's
-sessions with live tmux state overlaid on database records. No duplicates.
-Falls back to tmux-only display if MongoDB is unreachable.
+.BI "cs" " [\-\-sort [field]] [\-\-orphans]"
+Display the local dashboard: a single merged table of this machine's sessions
+with live tmux state overlaid on database records. No duplicates. Falls back
+to a tmux\-only display if MongoDB is unreachable.
+.RS
+.PP
+With \fB\-\-orphans\fP, also lists untracked tmux sessions that are running
+Claude but have no database record (e.g. sessions started manually outside
+cs).
+.PP
+Takes the same filter and sort options as \fBcs list\fP.
+.RE
 .TP
-.BI "cs sync" " [--quiet]"
-Harvest session metadata from
-.I ~/.claude/projects/
-and upsert to MongoDB. Detects active tmux sessions and their state. With
-.BR --quiet ,
-suppresses all output (suitable for
-.I .bashrc
-login hooks).
+.BI "cs sync" " [\-\-quiet]"
+Harvest session metadata from \fB~/.claude/projects/\fP and upsert it to
+MongoDB. Detects active tmux sessions and their state.
+.RS
+.PP
+With \fB\-\-quiet\fP, suppresses all output \(em this is the form the periodic
+cron/LaunchAgent sync runs.
+.RE
 .TP
-.BI "cs list" " [--local] [--host name] [--project name] [--limit n]"
-List sessions from the database sorted by most recently updated. Defaults to
-all hosts. Options:
+.BI "cs list" " [\-\-local] [\-\-host <name>] [\-\-project <name>] [\-\-limit <n>] [\-\-sort [field]]"
+List sessions from the database, most recently updated first. Defaults to all
+hosts.
 .RS
 .TP
-.B --local
+.BI \-\-sort " [field]"
+Sort by \fBtitle\fP, \fBupdated\fP, \fBhost\fP, or \fBproject\fP
+(\fB\-\-sort\fP alone sorts by title). Ties are broken by the remaining fields
+in that order.
+.TP
+.B \-\-local
 Show sessions from this host only.
 .TP
-.BI --host " name"
-Filter to a specific host. Accepts short names (e.g.,
-.I dev
-matches
-.IR dev.example.com ).
+.BI \-\-host " <name>"
+Filter to a specific host. Accepts short names (e.g. \fBdev\fP matches
+\fBdev.example.com\fP).
 .TP
-.BI --project " name"
+.BI \-\-project " <name>"
 Filter by project name.
 .TP
-.BI --limit " n"
-Maximum number of results (default: 20).
+.BI \-\-limit " <n>"
+Maximum number of results (default: 40).
 .RE
 .TP
-.BI "cs launch" " project [prompt]"
-Start Claude Code in a detached tmux session.
-The session persists across SSH disconnects. If
-.I prompt
-is provided, it is passed to Claude as the initial message.
-.TP
-.BI "cs adopt" " id-or-name [--attach]"
-Wrap an existing Claude session in a managed tmux session. The session is
-resumed via
-.B claude --resume
-inside a detached tmux. With
-.BR --attach ,
-connects immediately after adopting.
-.TP
-.BI "cs attach" " id-or-name [--host name]"
-Reconnect to a session. If the session is on the local machine,
-attaches to the tmux session directly. If already inside tmux, uses
-.B switch-client
-to avoid nesting. If on a remote machine, executes
-.BR ssh (1)
-to the remote host and attaches there. Requires SSH key authentication for
-remote sessions.
-.PP
+.BI "cs launch" " <project> [prompt]"
+Start Claude Code in a detached tmux session. The session survives SSH
+disconnects \(em Claude keeps working even if you close your terminal. If
+\fBprompt\fP is given, it is passed to Claude as the initial message.
 .RS
-Sessions can be identified by ID prefix (like
-.BR git (1)),
-.B /rename
-name (exact match), or project name. When ambiguous,
-.B cs
-prefers the local host's session. Use
-.B --host
-to disambiguate explicitly.
+.PP
+The output tells you the session name and how to reconnect.
 .RE
 .TP
-.BI "cs kill" " id-or-name [--host name]"
-Terminate a tmux session, local or remote via SSH. Updates the session
-state in MongoDB immediately.
+.BI "cs adopt" " <id\-or\-name> [\-\-attach]"
+Wrap an existing Claude session in a managed tmux session \(em use this to
+take a session you started normally and make it persistent. The session is
+resumed via \fBclaude \-\-resume\fP inside a detached tmux. With
+\fB\-\-attach\fP, connects immediately after adopting.
 .TP
-.BI "cs kill --all" " [--host name]"
+.BI "cs attach" " <id\-or\-name> [\-\-host <name>]"
+Reconnect to a session. If it is on the local machine, attaches to its tmux
+session directly; if you are already inside tmux, uses \fBswitch\-client\fP to
+avoid nesting. If it is on a remote machine, cs \fBssh\fP(1)'s there, creates
+the tmux session if needed, and attaches. Requires SSH key authentication for
+remote sessions.
+.RS
+.PP
+Sessions can be identified by ID prefix (like \fBgit\fP(1)), \fB/rename\fP
+name (exact match), or project name. When ambiguous, cs prefers the local
+host's session; use \fB\-\-host\fP to disambiguate explicitly.
+.RE
+.TP
+.BI "cs kill" " <id\-or\-name> [\-\-host <name>]"
+Terminate a tmux session, local or remote via SSH. Updates the session state
+in MongoDB immediately. With \fB\-\-all\fP, kills every active session,
+optionally filtered to one host.
+.TP
+.BI "cs kill \-\-all" " [\-\-host <name>]"
 Kill all active sessions. Optionally filter to a specific host.
 .TP
 .B cs resume
-Interactive session picker using
-.BR fzf (1).
-Displays recent sessions from the current machine and launches
-.B claude --resume
-for the selected session.
+Interactive session picker using \fBfzf\fP(1). Displays recent sessions from
+the current machine and launches \fBclaude \-\-resume\fP for the one you
+select.
 .TP
 .B cs last
-Resume the most recent session on the current machine without a picker.
-Equivalent to selecting the first item in
-.BR "cs resume" .
+Resume the most recent session on this machine \(em no picker, straight to
+Claude. Equivalent to selecting the first item in \fBcs resume\fP.
 .TP
 .B cs status
-Display live state of all active
-.IR cs-*
-tmux sessions on the current machine. Reads tmux directly; does not require
-MongoDB. States are color-coded:
+Display the live state of every active cs tmux session on this machine. Reads
+tmux directly; does not require MongoDB.
 .RS
 .TP
 .B WORKING
@@ -133,114 +135,122 @@ MongoDB. States are color-coded:
 (red) tmux session no longer exists.
 .RE
 .TP
-.BI "cs tag" " id-or-name label"
-Apply a text label to a session. Tags are stored in MongoDB and displayed
-in
-.B cs list
-output.
+.BI "cs tag" " <id\-or\-name> <label>"
+Apply a text label to a session for easy identification. Tags are stored in
+MongoDB and shown in \fBcs list\fP output.
 .TP
-.BI "cs rm" " id-or-name"
-Soft-delete a session. The record is marked with a
-.I deleted_at
-timestamp. It no longer appears in listings, queries, or sync, but can be
-restored.
-.TP
-.BI "cs rm --undo" " id-or-name"
-Restore a soft-deleted session.
-.TP
-.BI "cs prune" " [--days N] [--all]"
-Bulk soft-delete sessions that have no
-.B /rename
-name and no tag. Default threshold is 30 days. With
-.BR --all ,
-prunes regardless of age. Named and tagged sessions are never pruned.
-.TP
-.BI "cs deleted" " [--local] [--host name]"
-List soft-deleted sessions with deletion timestamps. Defaults to all hosts.
-.TP
-.BI "cs gc" " [--yes]"
-Find and purge compact/clear orphan sessions on this machine. Without
-.BR --yes ,
-shows what would be deleted. Orphans are session files created by
-.B /compact
-or
-.B /clear
-whose first message is a system tag, not real user input. Sync also
-skips orphans automatically.
-.TP
-.BI "cs purge" " pattern... [--yes] [--all] [--host name] [--deleted]"
-Hard delete sessions. Removes MongoDB records, JSONL files, and session
-directories. In single\-target mode, multiple ids/names may be listed
-.RB ( "cs purge --yes s1 s2 s3" );
-each is resolved independently and an unresolved one is reported and skipped
-rather than aborting the batch. Without
-.BR --yes ,
-shows what would be deleted. With
-.BR --all ,
-bulk deletes matching sessions (requires typed YES confirmation). Bulk
-.BR --all
-mode skips live
-.B /rename
-d or tagged sessions unless they have already been soft-deleted; target such a
-session explicitly to purge it. With
-.BR --deleted ,
-targets only soft-deleted sessions. Must be run on the host where sessions live.
-This is irreversible.
-.TP
-.BI "cs purge" " --orphans [--yes]"
-Remove orphaned local state on this machine:
-.I ~/.claude/projects/
-directories whose decoded project path no longer exists (the dirs
-.B cs sync
-skips with a
-.I "cannot decode path"
-warning), plus DB records on this host that point at a missing project path.
-Without
-.BR --yes ,
-lists what was found; removing more than one item also requires a typed
-.B YES
-(same as
-.BR "purge --all" ).
-Honors the keep-signal guard \(em a live
-.B /rename
-d or tagged session whose project path is gone (e.g. a transiently unmounted
-drive) is listed but kept; target it explicitly to remove it. Local-only and
-irreversible.
-.TP
-.BI "cs info" " id-or-name"
-Display the full record for a single session, including session ID, machine,
-project path, title,
-.B /rename
-name (if any), tag, state, message count, timestamps, tmux session name,
-summary, and schema version.
+.BI "cs info" " <id\-or\-name>"
+Display the full record for a single session: session ID, machine, project
+path, title, \fB/rename\fP name (if any), tag, state, message count,
+timestamps, tmux session name, summary, and schema version.
 .TP
 .B cs hosts
-List all hosts that have synced sessions, with session counts and last
-seen timestamps.
+List every host that has synced sessions, with session counts and when each
+was last seen.
 .TP
-.BI "cs agent stop" " [--host name] [--all]"
-Kill the persistent SSH agent on one or all machines. The agent runs at
-.I ~/.ssh/cs-agent.sock
-and is started automatically by
-.BR "cs attach" .
-Use this to remove loaded keys from memory.
+.BI "cs rm" " <id\-or\-name>"
+Soft\-delete a session: the record is marked with a \fBdeleted_at\fP
+timestamp, so it no longer appears in listings, queries, or sync \(em and
+\fBcs sync\fP will not bring it back. Local files are untouched. \fBcs rm
+\-\-undo\fP restores it.
 .TP
-.B cs update [--force] [--all]
-Check for a new version on the remote server. If a newer version is available,
-downloads the updated bundle and man page. The bundle is verified against its
-published SHA\-256 checksum before it replaces the running binary; a missing,
-malformed, or mismatched checksum aborts the update and leaves the current
-binary untouched. With
-.BR --force ,
-re-downloads even when the version matches. With
-.BR --all ,
-updates all known hosts via SSH after updating locally.
+.BI "cs rm \-\-undo" " <id\-or\-name>"
+Restore a soft\-deleted session.
 .TP
-.BR "cs version" ", " "--version"
+.BI "cs prune" " [\-\-days N] [\-\-all]"
+Bulk soft\-delete sessions that have no \fB/rename\fP name and no tag. Default
+threshold is 30 days; \fB\-\-all\fP prunes regardless of age. \fBNamed and
+tagged sessions are never pruned.\fP
+.TP
+.BI "cs deleted" " [\-\-local] [\-\-host <name>]"
+List soft\-deleted sessions with their deletion timestamps. Defaults to all
+hosts. Restore any of them with \fBcs rm \-\-undo <id>\fP.
+.TP
+.BI "cs gc" " [\-\-yes]"
+Collapse duplicate sessions. Sessions are grouped by project and host; the
+most recently updated one in each group is kept and the older ones become GC
+candidates. Without \fB\-\-yes\fP, shows what would be removed.
+.RS
+.PP
+This is a soft\-delete \(em no local files are touched, and anything removed
+can be restored with \fBcs rm \-\-undo <id>\fP.
+.RE
+.TP
+.BI "cs purge" " <pattern>... [\-\-yes] [\-\-all] [\-\-host <name>] [\-\-deleted]"
+Hard delete sessions \(em removes MongoDB records, JSONL files, and session
+directories. \fBIrreversible.\fP Without \fB\-\-yes\fP, shows what would be
+deleted. Must be run on the host where the sessions live.
+.RS
+.PP
+Several sessions can be named at once (\fBcs purge \-\-yes s1 s2 s3\fP). Each
+is resolved independently; one that does not resolve is reported and skipped
+rather than aborting the batch.
+.PP
+With \fB\-\-all\fP, bulk deletes matching sessions (requires typed \fBYES\fP
+confirmation). Bulk mode \fBskips live \fB/rename\fPd or tagged sessions\fP
+unless they have already been soft\-deleted \(em a wildcard cannot silently
+destroy a session you named or tagged. To purge one anyway, target it
+explicitly or soft\-delete it first. With \fB\-\-deleted\fP, targets only
+soft\-deleted sessions.
+.RE
+.TP
+.BI "cs purge \-\-orphans" " [\-\-yes]"
+Remove orphaned local state on this machine: \fB~/.claude/projects/\fP
+directories whose decoded project path no longer exists on disk (the dirs
+\fBcs sync\fP skips with a \fBcannot decode path\fP warning), plus DB records
+on this host that point at a missing project path. This is the cleanup for the
+cruft those skip\-warnings flag.
+.RS
+.PP
+Without \fB\-\-yes\fP, lists what was found; removing more than one item also
+requires a typed \fBYES\fP, same as \fBpurge \-\-all\fP.
+.PP
+Honors the same keep\-signal guard as bulk purge: a \fBlive \fB/rename\fPd or
+tagged\fP session whose project path is gone (e.g. a transiently unmounted
+drive) is listed but \fBkept\fP \(em target it explicitly with \fBcs purge
+<name>\fP to remove it. Local\-only and irreversible.
+.RE
+.TP
+.BI "cs add\-key" " [\-\-host <name>] [\-\-all]"
+Load your SSH key into the shared cs agent and reset its lifetime, prompting
+for the passphrase if needed. The agent is started only when its socket is
+dead; a live agent is never killed.
+.RS
+.PP
+Every cs session on a host shares one agent, so a single call covers all of
+them \(em run it when the key timer has expired and SSH starts failing.
+\fB\-\-host\fP runs it on a remote host; \fB\-\-all\fP on every known host.
+.RE
+.TP
+.BI "cs agent stop" " [\-\-host <name>] [\-\-all]"
+Kill the persistent SSH agent on one or all machines \(em useful when you are
+done for the day and want keys out of memory. The agent runs at
+\fB~/.ssh/cs\-agent.sock\fP and is started automatically by \fBcs attach\fP.
+.RS
+.PP
+Because the agent is shared, stopping it cuts SSH access for every cs session
+on that host at once.
+.RE
+.TP
+.BI "cs update" " [\-\-force] [\-\-all]"
+Check for a new version on the remote server and, if one is available,
+download the updated bundle and man page. \fB\-\-force\fP re\-downloads even
+when the version matches; \fB\-\-all\fP updates all known hosts via SSH after
+updating locally. Also installs the periodic sync if it is not set up (unless
+\fBnoCron\fP is set in config).
+.RS
+.PP
+The downloaded bundle is verified against its published SHA\-256 checksum
+before it replaces the running binary. A missing, malformed, or mismatched
+checksum aborts the update and leaves the current binary untouched.
+.RE
+.TP
+.BR "cs version" ", " "\-\-version"
 Print the current version and exit.
 .TP
-.BR "--help" ", " "-h"
-Display usage summary and exit.
+.BR "cs \-\-help" ", " "\-h"
+Display the usage summary and exit.
+.\" END GENERATED COMMANDS
 .SH SESSION TITLES
 Sessions are automatically titled from the first human message in the
 conversation. For example, if you started a session by typing "fix the nginx
@@ -257,6 +267,10 @@ Install on any Linux host with:
 curl -sSL https://raw.githubusercontent.com/kshartman/claude-session/main/install-remote.sh | bash
 .fi
 .RE
+.PP
+The installer verifies the downloaded bundle against its published SHA\-256
+checksum before installing it, and registers a 5\-minute periodic sync (cron on
+Linux, LaunchAgent on macOS). No shell profile is modified.
 .PP
 Options (pass via
 .BR "bash -s --" ):
@@ -311,11 +325,14 @@ SSH hostname to copy config from during install (default:
 MongoDB connection configuration.
 .TP
 .I ~/.ssh/cs-agent.sock
-Persistent SSH agent socket managed by
-.BR "cs attach" .
-Started automatically, keys expire after
+Persistent SSH agent socket shared by every cs session on the host. Started
+automatically by
+.BR "cs attach" ;
+keys expire after
 .I agentKeyTimeout
-seconds (default 8h). Kill with
+seconds (default 8h). Reload with
+.BR "cs add-key" ,
+kill with
 .BR "cs agent stop" .
 .TP
 .I ~/.claude/projects/<path-hash>/<session-id>.jsonl
@@ -325,7 +342,9 @@ Claude Code session files (read-only; cs never modifies these).
 Optional session summaries generated by Claude Code.
 .TP
 .I ~/.local/bin/cs
-Default symlink location for the cs executable.
+The cs executable \(em a symlink to
+.I cs.ts
+for source installs, the downloaded bundle for remote installs.
 .SH EXIT STATUS
 .TP
 .B 0
@@ -380,11 +399,11 @@ cs list --project myapp
 .fi
 .RE
 .PP
-Auto-sync on login (add to .bashrc):
+Reload the SSH key after the 8h timer expires:
 .PP
 .RS
 .nf
-cs sync --quiet &
+cs add-key
 .fi
 .RE
 .SH DEPENDENCIES

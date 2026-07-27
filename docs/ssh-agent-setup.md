@@ -80,15 +80,24 @@ In `~/.config/cs/config.json`:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `agentKeyTimeout` | `28800` (8h) | Seconds before loaded keys expire. Set to `0` for no expiry (not recommended). |
-| `agentKeyFile` | `~/.ssh/id_ed25519` | Which SSH private key to load into the agent. Supports `~` (expanded automatically). |
+| `agentKeyFile` | (unset) | Which SSH private key to load into the agent. Unset means plain `ssh-add`, i.e. ssh's default key set. Supports `~` (expanded automatically). |
 
 ## Managing agents
 
 ```bash
+cs add-key                 # (re)load the key, resetting its lifetime
+cs add-key --host dev      # same, on a specific host
+cs add-key --all           # same, on all known hosts
+
 cs agent stop              # stop agent on this machine
 cs agent stop --host dev   # stop agent on a specific host
 cs agent stop --all        # stop agents on all known hosts
 ```
+
+`cs add-key` starts the agent only if its socket is dead — it never kills a live
+one — and re-adding an identity resets its `-t` timer. Since every cs session on
+a host shares the one agent, a single `cs add-key` covers all of them, and a
+single `cs agent stop` cuts SSH for all of them.
 
 ## Requirements
 
@@ -102,6 +111,6 @@ cs agent stop --all        # stop agents on all known hosts
 |----------|-------------|-------------|
 | Normal detach | Agent alive, keys loaded | Instant reattach, no passphrase |
 | Sleep / network drop | Agent alive, keys loaded | Instant reattach, no passphrase |
-| Keys expired (8h default) | Agent alive, no keys | Prompts passphrase on next `cs attach` |
+| Keys expired (8h default) | Agent alive, no keys | Prompts passphrase on next `cs attach`, or run `cs add-key` |
 | `cs agent stop` | Agent stopped | Next `cs attach` starts fresh agent, prompts passphrase |
 | Machine reboot | Agent gone | Next `cs attach` starts agent, prompts passphrase |

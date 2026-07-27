@@ -15,6 +15,7 @@ import {
 import { join, basename } from "path";
 import { homedir } from "os";
 import { createHash } from "crypto";
+import { COMMANDS, LIST_OPTIONS } from "./commands";
 import {
   type SessionRecord,
   type SessionState,
@@ -2224,46 +2225,42 @@ async function cmdUpdateAll(config: CsConfig): Promise<void> {
 
 // --- usage ---
 
+/** Column the description text starts in, for both usage tables. */
+const HELP_DESC_COL = 34;
+
+/** "  <synopsis>  <description>", wrapping to a second line when it won't fit. */
+function helpRow(synopsis: string, description: string): string {
+  const left = `  ${synopsis}`;
+  if (left.length > HELP_DESC_COL + 10) {
+    return `${left}\n${" ".repeat(HELP_DESC_COL)}${description}`;
+  }
+  return left + " ".repeat(Math.max(2, HELP_DESC_COL - left.length)) + description;
+}
+
+/**
+ * The command table is rendered from commands.ts, the same source the man page
+ * and README are generated from — so a flag can't be documented in one and
+ * missing from another.
+ */
 function printUsage(): void {
+  const commandRows: string[] = [];
+  for (const cmd of COMMANDS) {
+    if (cmd.summary === undefined) continue;
+    const args = cmd.helpArgs ?? cmd.args ?? "";
+    commandRows.push(helpRow(args ? `${cmd.name} ${args}` : cmd.name, cmd.summary));
+    for (const v of cmd.variants ?? []) {
+      commandRows.push(helpRow(v.args ? `${v.name} ${v.args}` : v.name, v.summary));
+    }
+  }
+  const optionRows = LIST_OPTIONS.map((o) => helpRow(o.term, o.help ?? o.desc));
+
   console.log(`${bold("cs")} — Claude Session Manager
 
 ${bold("Usage:")}
-  cs [--sort [field]] [--orphans]  Smart dashboard (--orphans: show untracked claude tmux sessions)
-  cs sync [--quiet]               Sync sessions to MongoDB
-  cs list [options]               List sessions
-  cs launch <project> [prompt]    Launch Claude in detached tmux
-  cs adopt <id-prefix> [--attach] Wrap existing session in managed tmux
-  cs attach <id-prefix>           Attach to session (local or remote)
-  cs kill <id-or-name> [--host <name>]  Kill a tmux session (local or remote)
-  cs kill --all [--host <name>]   Kill all sessions (optionally on one host)
-  cs resume                       Interactive session picker (fzf)
-  cs last                         Resume most recent session
-  cs status                       Live tmux session states
-  cs tag <id-prefix> <label>      Tag a session
-  cs info <id-prefix>             Show session details
-  cs hosts                        List hosts with session counts
-  cs rm <id-or-name>              Soft-delete a session
-  cs rm --undo <id-or-name>       Restore a soft-deleted session
-  cs prune [--days N] [--all]     Bulk soft-delete unnamed/untagged sessions
-  cs deleted                      List soft-deleted sessions
-  cs gc                           List duplicate sessions (same project+host, older ones)
-  cs gc --yes                     Soft-delete the duplicates
-  cs purge <pattern>... [--yes]   Hard delete one or more sessions + local files (irreversible)
-  cs purge <pattern> --all [--yes] [--host <name>] [--deleted]
-                                  Bulk hard delete (skips live named/tagged sessions)
-  cs purge --orphans [--yes]      Remove ~/.claude/projects/ dirs whose project path is gone
-  cs add-key [--host <name>] [--all]  Reload SSH key into cs-agent (resets the key timer)
-  cs agent stop [--host] [--all]  Stop SSH agent on host(s)
-  cs update                       Update cs to latest version
-  cs update --all                 Update cs on all known hosts via SSH
-  cs version                      Show current version
+${commandRows.join("\n")}
 
 ${bold("List/dashboard options:")}
-  --sort [field]                  Sort by: title, updated, host, project (default: title)
-  --local                         This host only
-  --host <hostname>               Filter by host
-  --project <name>                Filter by project
-  --limit <n>                     Max results (default: 40)
+${optionRows.join("\n")}
 
 ${bold("Install:")}
   curl -sSL ${getBaseUrl()}/install-remote.sh | bash
