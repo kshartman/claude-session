@@ -23,6 +23,9 @@ import {
   stateColor,
   SCHEMA_VERSION,
   hostnameVariants,
+  sshHostCandidates,
+  parseVersionOutput,
+  firstLine,
 } from "./lib";
 
 // --- config ---
@@ -390,6 +393,53 @@ describe("shellQuote", () => {
   });
   test("handles empty string", () => {
     expect(shellQuote("")).toBe("''");
+  });
+});
+
+describe("sshHostCandidates", () => {
+  test("FQDN yields stored, lowercase, short, short-lowercase", () => {
+    expect(sshHostCandidates("HOST.example.com")).toEqual([
+      "HOST.example.com",
+      "host.example.com",
+      "HOST",
+      "host",
+    ]);
+  });
+  test("uppercase short name yields both cases", () => {
+    expect(sshHostCandidates("WORKSTATION")).toEqual(["WORKSTATION", "workstation"]);
+  });
+  test("already-lowercase short name yields one candidate", () => {
+    expect(sshHostCandidates("dev")).toEqual(["dev"]);
+  });
+  test("lowercase FQDN does not repeat the stored form", () => {
+    expect(sshHostCandidates("dev.example.com")).toEqual(["dev.example.com", "dev"]);
+  });
+});
+
+describe("parseVersionOutput", () => {
+  test("parses cs version output", () => {
+    expect(parseVersionOutput("cs v1.9.1")).toBe("1.9.1");
+  });
+  test("parses a bare semver", () => {
+    expect(parseVersionOutput("1.10.0\n")).toBe("1.10.0");
+  });
+  test("ignores surrounding noise", () => {
+    expect(parseVersionOutput("warning: foo\ncs v2.0.13\n")).toBe("2.0.13");
+  });
+  test("returns null when there is no version", () => {
+    expect(parseVersionOutput("command not found: cs")).toBeNull();
+  });
+});
+
+describe("firstLine", () => {
+  test("returns the first non-empty line", () => {
+    expect(firstLine("\n  ssh: connect failed\nmore\n")).toBe("ssh: connect failed");
+  });
+  test("truncates past the cap", () => {
+    expect(firstLine("x".repeat(100), 10)).toBe(`${"x".repeat(9)}…`);
+  });
+  test("returns empty string for empty input", () => {
+    expect(firstLine("   ")).toBe("");
   });
 });
 

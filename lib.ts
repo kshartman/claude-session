@@ -2,7 +2,7 @@
 
 // VERSION is canonical in the VERSION file; `bun run build` syncs this constant
 // via scripts/sync-version.ts. Edit the VERSION file, not this line.
-export const VERSION = "1.9.1";
+export const VERSION = "1.9.2";
 export const SCHEMA_VERSION = 2;
 
 export type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";
@@ -95,6 +95,29 @@ export function loadConfig(): CsConfig {
 
 export function getHostname(config: CsConfig): string {
   return config.hostname ?? osHostname();
+}
+
+/**
+ * Host spellings to try when SSHing to a machine, in order. A record's
+ * `machine` may be an FQDN, and some hosts register themselves uppercase
+ * (Windows DNS), so try the stored form, lowercase, then the short name.
+ */
+export function sshHostCandidates(host: string): string[] {
+  const short = host.split(".")[0]!;
+  const candidates = [host, host.toLowerCase()];
+  if (short !== host) candidates.push(short, short.toLowerCase());
+  return [...new Set(candidates)];
+}
+
+/** Pull a semver out of `cs version` output ("cs v1.9.1" → "1.9.1"). */
+export function parseVersionOutput(output: string): string | null {
+  return output.match(/\bv?(\d+\.\d+\.\d+)\b/)?.[1] ?? null;
+}
+
+/** First non-empty line, trimmed and capped — for surfacing an error reason. */
+export function firstLine(text: string, max = 72): string {
+  const line = text.trim().split("\n")[0]?.trim() ?? "";
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
 export function hostnameVariants(name: string): string[] {

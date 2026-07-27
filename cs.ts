@@ -40,6 +40,9 @@ import {
   shellQuote,
   getHostname,
   hostnameVariants,
+  sshHostCandidates,
+  parseVersionOutput,
+  firstLine,
   relativeTime,
   formatBytes,
   formatTable,
@@ -1956,12 +1959,7 @@ async function cmdAgentStop(
   };
 
   const stopRemote = async (h: string): Promise<boolean> => {
-    const candidates = [h, h.toLowerCase()];
-    const short = h.split(".")[0]!;
-    if (short !== h) candidates.push(short, short.toLowerCase());
-    const tryHosts = [...new Set(candidates)];
-
-    for (const tryHost of tryHosts) {
+    for (const tryHost of sshHostCandidates(h)) {
       const proc = Bun.spawn([
         "ssh", tryHost, "-o", "ControlPath=none", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
         `pkill -f "ssh-agent -a ${agentSock}" 2>/dev/null; rm -f "${agentSock}"`,
@@ -2096,13 +2094,17 @@ exec cs sync --quiet
   }
 }
 
+/** The version the repo is publishing. Throws so callers pick their own policy. */
+async function fetchRemoteVersion(): Promise<string> {
+  const resp = await fetch(`${getBaseUrl()}/VERSION`);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return (await resp.text()).trim();
+}
+
 async function cmdUpdate(force = false): Promise<void> {
-  // Fetch remote version
   let remoteVersion: string;
   try {
-    const resp = await fetch(`${getBaseUrl()}/VERSION`);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    remoteVersion = (await resp.text()).trim();
+    remoteVersion = await fetchRemoteVersion();
   } catch (err) {
     console.error(`Failed to check for updates: ${err}`);
     process.exit(1);
@@ -2169,22 +2171,89 @@ async function cmdUpdate(force = false): Promise<void> {
   ensureCron();
 }
 
+/** PATH prefix so non-interactive SSH shells can find cs and bun. */
+const REMOTE_CS_PATH = "PATH=$HOME/.local/bin:$HOME/.bun/bin:$PATH";
+
+interface SshResult {
+  host: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+/** Run a command over SSH, trying each host spelling until one exits 0. */
+async function sshTry(tryHosts: string[], command: string): Promise<SshResult> {
+  let last: SshResult = {
+    host: tryHosts[0] ?? "",
+    exitCode: 255,
+    stdout: "",
+    stderr: "no host candidates",
+  };
+  for (const host of tryHosts) {
+    const proc = Bun.spawn([
+      "ssh", host, "-o", "ControlPath=none", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+      command,
+    ], { stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    last = { host, exitCode: await proc.exited, stdout, stderr };
+    if (last.exitCode === 0) return last;
+  }
+  return last;
+}
+
+type UpdateOutcome = "updated" | "unreachable" | "failed";
+
+/**
+ * Update one host and report what actually happened. A non-zero exit from the
+ * update command is not conclusive — the host may simply be asleep, or the
+ * connection may have dropped after the install completed — so on failure we
+ * ask the host what version it is running rather than guessing from the exit
+ * code alone.
+ */
+async function updateHost(
+  host: string,
+  target: string | null
+): Promise<{ outcome: UpdateOutcome; line: string }> {
+  const tryHosts = sshHostCandidates(host);
+  const run = await sshTry(tryHosts, `${REMOTE_CS_PATH} cs update`);
+  if (run.exitCode === 0) {
+    return { outcome: "updated", line: run.stdout.trim().split("\n").pop() ?? "done" };
+  }
+
+  const reason = firstLine(run.stderr) || `exit ${run.exitCode}`;
+  const probe = await sshTry(tryHosts, `${REMOTE_CS_PATH} cs version`);
+  if (probe.exitCode !== 0) {
+    return { outcome: "unreachable", line: dim(`unreachable — ${reason}`) };
+  }
+
+  const version = parseVersionOutput(probe.stdout);
+  if (version && target && version === target) {
+    return {
+      outcome: "updated",
+      line: `${green(`cs v${version}`)} ${dim(`(update command errored: ${reason})`)}`,
+    };
+  }
+  return {
+    outcome: "failed",
+    line: `${red("failed")} — still on ${version ? `v${version}` : "an unknown version"} ${dim(`(${reason})`)}`,
+  };
+}
+
 async function cmdUpdateAll(config: CsConfig): Promise<void> {
-  // Update locally first
   await cmdUpdate();
 
-  // Get all distinct hosts from MongoDB
-  const hosts = await withDb(config, async (_db, sessions) => {
-    const pipeline = [
-      { $group: { _id: "$machine" } },
-    ];
-    return sessions.aggregate(pipeline).toArray();
-  });
-
+  const target = await fetchRemoteVersion().catch(() => null);
+  const hosts = await withDb(config, async (_db, sessions) =>
+    sessions.aggregate([{ $group: { _id: "$machine" } }]).toArray()
+  );
   const localHost = getHostname(config);
   const remoteHosts = hosts
     .map((h) => h["_id"] as string)
-    .filter((h) => h.toLowerCase() !== localHost.toLowerCase());
+    .filter((h) => h.toLowerCase() !== localHost.toLowerCase())
+    .sort();
 
   if (remoteHosts.length === 0) {
     console.log("\nNo remote hosts to update.");
@@ -2192,35 +2261,18 @@ async function cmdUpdateAll(config: CsConfig): Promise<void> {
   }
 
   console.log(`\nUpdating ${remoteHosts.length} remote host(s)...`);
-
+  const tally: Record<UpdateOutcome, number> = { updated: 0, unreachable: 0, failed: 0 };
   for (const host of remoteHosts) {
-    const shortName = host.split(".")[0]!;
-    process.stdout.write(`  ${shortName}: `);
-
-    // Try original hostname, then lowercase (handles Windows DNS uppercase)
-    const candidates = [host, host.toLowerCase()];
-    if (shortName !== host) candidates.push(shortName, shortName.toLowerCase());
-    // Dedupe
-    const tryHosts = [...new Set(candidates)];
-
-    let success = false;
-    for (const tryHost of tryHosts) {
-      const proc = Bun.spawn([
-        "ssh", tryHost, "-o", "ControlPath=none", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-        "PATH=$HOME/.local/bin:$HOME/.bun/bin:$PATH cs update",
-      ], { stdout: "pipe", stderr: "pipe" });
-      const stdout = await new Response(proc.stdout).text();
-      const exitCode = await proc.exited;
-      if (exitCode === 0) {
-        console.log(stdout.trim().split("\n").pop() ?? "done");
-        success = true;
-        break;
-      }
-    }
-    if (!success) {
-      console.log(red("failed"));
-    }
+    process.stdout.write(`  ${host.split(".")[0]!}: `);
+    const { outcome, line } = await updateHost(host, target);
+    tally[outcome] += 1;
+    console.log(line);
   }
+
+  const parts = [`${tally.updated} up to date`];
+  if (tally.unreachable) parts.push(dim(`${tally.unreachable} unreachable`));
+  if (tally.failed) parts.push(red(`${tally.failed} failed`));
+  console.log(`\n${parts.join(", ")}.`);
 }
 
 // --- usage ---
