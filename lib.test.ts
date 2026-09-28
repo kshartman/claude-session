@@ -25,6 +25,9 @@ import {
   hostnameVariants,
   sshHostCandidates,
   parseVersionOutput,
+  parseChecksum,
+  mirrorUrlProblem,
+  crossCheckChecksums,
   firstLine,
 } from "./lib";
 
@@ -428,6 +431,67 @@ describe("parseVersionOutput", () => {
   });
   test("returns null when there is no version", () => {
     expect(parseVersionOutput("command not found: cs")).toBeNull();
+  });
+});
+
+const HASH_A = "a".repeat(64);
+const HASH_B = "b".repeat(64);
+
+describe("parseChecksum", () => {
+  test("takes the hash from sha256sum format", () => {
+    expect(parseChecksum(`${HASH_A}  cs.bundle.js\n`)).toBe(HASH_A);
+  });
+  test("lowercases the hash", () => {
+    expect(parseChecksum(HASH_A.toUpperCase())).toBe(HASH_A);
+  });
+  test("rejects a short hash", () => {
+    expect(parseChecksum("abc123  cs.bundle.js")).toBeNull();
+  });
+  test("rejects non-hex content like an HTML error page", () => {
+    expect(parseChecksum("<html><body>404</body></html>")).toBeNull();
+  });
+  test("rejects empty input", () => {
+    expect(parseChecksum("")).toBeNull();
+  });
+});
+
+describe("mirrorUrlProblem", () => {
+  const primary = "https://raw.example.com/owner/repo/main";
+  test("accepts a mirror on a different host", () => {
+    expect(mirrorUrlProblem(primary, "https://git.example.org/owner/repo/-/raw/main")).toBeNull();
+  });
+  test("rejects a mirror on the primary's host", () => {
+    expect(mirrorUrlProblem(primary, "https://raw.example.com/other/repo/main")).toContain("same host");
+  });
+  test("compares hosts case-insensitively", () => {
+    expect(mirrorUrlProblem(primary, "https://RAW.Example.COM/x")).toContain("same host");
+  });
+  test("treats a different port as a different origin", () => {
+    expect(mirrorUrlProblem(primary, "https://raw.example.com:8443/x")).toBeNull();
+  });
+  test("rejects an unparseable mirror URL", () => {
+    expect(mirrorUrlProblem(primary, "not a url")).toContain("not a valid URL");
+  });
+});
+
+describe("crossCheckChecksums", () => {
+  test("trusts a checksum both origins agree on", () => {
+    expect(crossCheckChecksums(`${HASH_A}  cs.bundle.js`, HASH_A.toUpperCase())).toEqual({ ok: true, hash: HASH_A });
+  });
+  test("refuses when the origins disagree", () => {
+    const result = crossCheckChecksums(HASH_A, HASH_B);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("disagree");
+  });
+  test("refuses a malformed primary", () => {
+    const result = crossCheckChecksums("garbage", HASH_A);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("primary");
+  });
+  test("refuses a malformed mirror", () => {
+    const result = crossCheckChecksums(HASH_A, "");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("mirror");
   });
 });
 

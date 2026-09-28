@@ -475,6 +475,9 @@ export const COMMANDS: CommandDoc[] = [
       {
         p: "The downloaded bundle is verified against its published SHA-256 checksum before it replaces the running binary. A missing, malformed, or mismatched checksum aborts the update and leaves the current binary untouched.",
       },
+      {
+        p: "On its own, that checksum comes from the same origin as the bundle, so it catches a corrupted download but not a compromised repo. Set `mirrorUrl` in config (or `CS_MIRROR_URL`) to a second, independent host serving the same files: the update then proceeds only if both origins publish the identical checksum, and aborts if the mirror is unreachable, disagrees, or is on the same host as the primary.",
+      },
     ],
   },
   {

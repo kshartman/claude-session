@@ -264,6 +264,8 @@ Check for a new version on the remote server and, if one is available, download 
 
 The downloaded bundle is verified against its published SHA-256 checksum before it replaces the running binary. A missing, malformed, or mismatched checksum aborts the update and leaves the current binary untouched.
 
+On its own, that checksum comes from the same origin as the bundle, so it catches a corrupted download but not a compromised repo. Set `mirrorUrl` in config (or `CS_MIRROR_URL`) to a second, independent host serving the same files: the update then proceeds only if both origins publish the identical checksum, and aborts if the mirror is unreachable, disagrees, or is on the same host as the primary.
+
 ### `cs version`, `--version`
 
 Print the current version and exit.
@@ -315,6 +317,7 @@ Config lives at `~/.config/cs/config.json`:
 | `agentKeyFile` | (unset) | Which SSH private key to load into the agent. Unset means plain `ssh-add`, i.e. ssh's default key set. Supports `~`. |
 | `hostname` | `os.hostname()` | Override the stored hostname. Use when `os.hostname()` changes (e.g., short name → FQDN) to keep records consistent. Sync auto-migrates old records. |
 | `repoUrl` | GitHub repo URL | Override the base URL for update/install downloads |
+| `mirrorUrl` | (unset) | A second, independent origin serving the same release files. When set, `cs update` requires both origins to publish the identical bundle checksum and refuses otherwise. For a fresh install, pass it as `CS_MIRROR_URL` to `install-remote.sh`. |
 
 ## Multi-machine setup
 

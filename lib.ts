@@ -2,7 +2,7 @@
 
 // VERSION is canonical in the VERSION file; `bun run build` syncs this constant
 // via scripts/sync-version.ts. Edit the VERSION file, not this line.
-export const VERSION = "1.9.2";
+export const VERSION = "1.10.0";
 export const SCHEMA_VERSION = 2;
 
 export type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";
@@ -33,6 +33,7 @@ export interface CsConfig {
   noCron?: boolean;
   remotePath?: string;
   repoUrl?: string;
+  mirrorUrl?: string;
   agentKeyTimeout?: number;
   agentKeyFile?: string;
   hostname?: string;
@@ -45,7 +46,7 @@ import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
 
 const CONFIG_DIR = join(homedir(), ".config", "cs");
-const CONFIG_PATH = join(CONFIG_DIR, "config.json");
+export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
 export function loadConfig(): CsConfig {
   if (!existsSync(CONFIG_PATH)) {
@@ -87,6 +88,7 @@ export function loadConfig(): CsConfig {
     noCron: parsed["noCron"] === true,
     remotePath: typeof parsed["remotePath"] === "string" ? parsed["remotePath"] : "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin",
     repoUrl: typeof parsed["repoUrl"] === "string" ? parsed["repoUrl"] : undefined,
+    mirrorUrl: typeof parsed["mirrorUrl"] === "string" && parsed["mirrorUrl"] ? parsed["mirrorUrl"] : undefined,
     agentKeyTimeout: typeof parsed["agentKeyTimeout"] === "number" ? parsed["agentKeyTimeout"] : 28800,
     agentKeyFile: typeof parsed["agentKeyFile"] === "string" ? parsed["agentKeyFile"] : undefined,
     hostname: typeof parsed["hostname"] === "string" ? parsed["hostname"] : undefined,
@@ -118,6 +120,46 @@ export function parseVersionOutput(output: string): string | null {
 export function firstLine(text: string, max = 72): string {
   const line = text.trim().split("\n")[0]?.trim() ?? "";
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+/** The hash from `sha256sum`-format text, lowercased; null if it isn't a sha256 hex digest. */
+export function parseChecksum(text: string): string | null {
+  const hash = (text.trim().split(/\s+/)[0] ?? "").toLowerCase();
+  return /^[0-9a-f]{64}$/.test(hash) ? hash : null;
+}
+
+export type ChecksumCheck =
+  | { ok: true; hash: string }
+  | { ok: false; reason: string };
+
+function urlHost(url: string): string | null {
+  return URL.canParse(url) ? new URL(url).host.toLowerCase() : null;
+}
+
+/**
+ * Why `mirrorUrl` can't serve as an independent second origin for the bundle
+ * checksum, or null if it can. A mirror on the primary's host adds no
+ * protection, so it is rejected rather than silently counted as a second vote.
+ */
+export function mirrorUrlProblem(primaryUrl: string, mirrorUrl: string): string | null {
+  const mirrorHost = urlHost(mirrorUrl);
+  if (!mirrorHost) return `mirror URL is not a valid URL: ${mirrorUrl}`;
+  if (mirrorHost === urlHost(primaryUrl)) {
+    return `mirror is on the same host as the primary (${mirrorHost}), so it is not an independent check`;
+  }
+  return null;
+}
+
+/** Both origins must publish the same well-formed checksum for it to be trusted. */
+export function crossCheckChecksums(primaryText: string, mirrorText: string): ChecksumCheck {
+  const primary = parseChecksum(primaryText);
+  if (!primary) return { ok: false, reason: "primary checksum is missing or malformed" };
+  const mirror = parseChecksum(mirrorText);
+  if (!mirror) return { ok: false, reason: "mirror checksum is missing or malformed" };
+  if (primary !== mirror) {
+    return { ok: false, reason: `origins disagree\n  primary ${primary}\n  mirror  ${mirror}` };
+  }
+  return { ok: true, hash: primary };
 }
 
 export function hostnameVariants(name: string): string[] {

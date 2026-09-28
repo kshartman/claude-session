@@ -23,6 +23,7 @@ import {
   VERSION,
   SCHEMA_VERSION,
   loadConfig,
+  CONFIG_PATH,
   ConfigError,
   redactUri,
   parseSessionJsonl,
@@ -42,6 +43,9 @@ import {
   hostnameVariants,
   sshHostCandidates,
   parseVersionOutput,
+  parseChecksum,
+  mirrorUrlProblem,
+  crossCheckChecksums,
   firstLine,
   relativeTime,
   formatBytes,
@@ -2101,6 +2105,49 @@ async function fetchRemoteVersion(): Promise<string> {
   return (await resp.text()).trim();
 }
 
+/** Mirror origin for the checksum cross-check: CS_MIRROR_URL > config mirrorUrl > none. */
+function getMirrorUrl(): string | undefined {
+  const fromEnv = process.env["CS_MIRROR_URL"];
+  if (fromEnv) return fromEnv;
+  // No config file is a legitimate "no mirror configured". A config that exists
+  // but won't load throws, so a broken config can't silently drop the check.
+  if (!existsSync(CONFIG_PATH)) return undefined;
+  return loadConfig().mirrorUrl;
+}
+
+async function fetchChecksumText(label: string, baseUrl: string): Promise<string> {
+  try {
+    const resp = await fetch(`${baseUrl}/cs.bundle.js.sha256`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return await resp.text();
+  } catch (err) {
+    throw new Error(`${label} checksum unavailable from ${baseUrl}: ${err}`);
+  }
+}
+
+/**
+ * The bundle checksum to trust. With a mirror configured, both origins must
+ * publish the same checksum, so compromising one origin can't pass a bad
+ * bundle. Without one it rests on the primary alone, and we say so.
+ */
+async function fetchTrustedChecksum(): Promise<string> {
+  const primaryUrl = getBaseUrl();
+  const primaryText = await fetchChecksumText("primary", primaryUrl);
+  const mirrorUrl = getMirrorUrl();
+  if (!mirrorUrl) {
+    const hash = parseChecksum(primaryText);
+    if (!hash) throw new Error("primary checksum is missing or malformed");
+    console.log(dim("  checksum from one origin only — set mirrorUrl to cross-check a second"));
+    return hash;
+  }
+  const problem = mirrorUrlProblem(primaryUrl, mirrorUrl);
+  if (problem) throw new Error(problem);
+  const check = crossCheckChecksums(primaryText, await fetchChecksumText("mirror", mirrorUrl));
+  if (!check.ok) throw new Error(check.reason);
+  console.log(dim(`  checksum confirmed by mirror (${new URL(mirrorUrl).host})`));
+  return check.hash;
+}
+
 async function cmdUpdate(force = false): Promise<void> {
   let remoteVersion: string;
   try {
@@ -2120,17 +2167,14 @@ async function cmdUpdate(force = false): Promise<void> {
     ? `Force updating cs v${VERSION}...`
     : `Updating cs v${VERSION} → v${remoteVersion}...`);
 
-  // Fetch the published checksum first — fail closed if it's missing or
-  // malformed so we never overwrite the running binary with an unverifiable
-  // bundle. This is the only trust anchor on the self-update path.
+  // Establish the checksum first — fail closed if it's missing, malformed, or
+  // the origins disagree, so we never overwrite the running binary with an
+  // unverifiable bundle. This is the only trust anchor on the self-update path.
   let expectedHash: string;
   try {
-    const resp = await fetch(`${getBaseUrl()}/cs.bundle.js.sha256`);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    expectedHash = ((await resp.text()).trim().split(/\s+/)[0] ?? "").toLowerCase();
-    if (!/^[0-9a-f]{64}$/.test(expectedHash)) throw new Error("malformed checksum");
+    expectedHash = await fetchTrustedChecksum();
   } catch (err) {
-    console.error(`Refusing to update: could not fetch a valid bundle checksum (${err}).`);
+    console.error(`Refusing to update: could not establish a trusted bundle checksum (${err}).`);
     process.exit(1);
   }
 
@@ -2320,6 +2364,7 @@ ${bold("Install:")}
 
 ${bold("Environment:")}
   CS_REPO_URL                     Override repo URL for update/install
+  CS_MIRROR_URL                   Second origin whose checksum must match (update/install)
   NO_COLOR                        Disable color output`);
 }
 

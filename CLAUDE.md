@@ -274,8 +274,12 @@ bun run build   # produces cs.bundle.js + cs.bundle.js.sha256
 Build also writes `cs.bundle.js.sha256` (sha256sum format). Both files are
 published to the repo root. `cs update` and `install-remote.sh` fetch the
 checksum and verify the downloaded bundle before it replaces the running binary —
-a missing, malformed, or mismatched checksum aborts (fail closed), so a repo
-compromise or truncated download can't silently install a bad bundle. Any release
+a missing, malformed, or mismatched checksum aborts (fail closed). That alone
+only catches a corrupted or truncated download: the checksum comes from the same
+origin as the bundle, so whoever can push to the repo can publish a matching
+pair. Protection against a compromised origin comes from the opt-in mirror
+(`mirrorUrl` / `CS_MIRROR_URL`): both origins must publish the identical checksum,
+or the update refuses. Any release
 that ships `cs.bundle.js` MUST ship the matching `cs.bundle.js.sha256` (the build
 chains them, so just run `bun run build`).
 

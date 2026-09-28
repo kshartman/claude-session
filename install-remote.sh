@@ -15,6 +15,7 @@ BIN_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/cs"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 CS_REPO_URL="${CS_REPO_URL:-https://raw.githubusercontent.com/kshartman/claude-session/main}"
+CS_MIRROR_URL="${CS_MIRROR_URL:-}"
 BUNDLE_URL="$CS_REPO_URL/cs.bundle.js"
 MANPAGE_URL="$CS_REPO_URL/cs.1"
 MAN_DIR="$HOME/.local/share/man/man1"
@@ -65,6 +66,35 @@ if ! printf '%s' "$EXPECTED" | grep -qiE '^[0-9a-f]{64}$'; then
   echo "ERROR: could not fetch a valid bundle checksum — aborting."
   rm -f "$BIN_DIR/cs"
   exit 1
+fi
+
+# Optional second origin: when CS_MIRROR_URL is set, it must be a different host
+# and publish the identical checksum, so one compromised origin can't pass a bad
+# bundle. Unset keeps single-origin behavior.
+if [ -n "$CS_MIRROR_URL" ]; then
+  url_host() { printf '%s' "$1" | sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*://([^/]+).*#\1#' | tr '[:upper:]' '[:lower:]'; }
+  MIRROR_HOST=$(url_host "$CS_MIRROR_URL")
+  if [ "$MIRROR_HOST" = "$(url_host "$CS_REPO_URL")" ]; then
+    echo "ERROR: CS_MIRROR_URL is on the same host as the repo ($MIRROR_HOST) — not an independent check. Aborting."
+    rm -f "$BIN_DIR/cs"
+    exit 1
+  fi
+  MIRROR_EXPECTED=$(curl -fsSL "$CS_MIRROR_URL/cs.bundle.js.sha256" 2>/dev/null | awk '{print $1}' || true)
+  if ! printf '%s' "$MIRROR_EXPECTED" | grep -qiE '^[0-9a-f]{64}$'; then
+    echo "ERROR: could not fetch a valid checksum from mirror $MIRROR_HOST — aborting."
+    rm -f "$BIN_DIR/cs"
+    exit 1
+  fi
+  if [ "$(printf '%s' "$EXPECTED" | tr 'A-F' 'a-f')" != "$(printf '%s' "$MIRROR_EXPECTED" | tr 'A-F' 'a-f')" ]; then
+    echo "ERROR: repo and mirror publish different checksums — aborting."
+    echo "  repo   $EXPECTED"
+    echo "  mirror $MIRROR_EXPECTED"
+    rm -f "$BIN_DIR/cs"
+    exit 1
+  fi
+  echo "  Checksum confirmed by mirror ($MIRROR_HOST)"
+else
+  echo "  note: checksum from one origin only — set CS_MIRROR_URL to cross-check a second"
 fi
 if command -v sha256sum &>/dev/null; then
   ACTUAL=$(sha256sum "$BIN_DIR/cs" | awk '{print $1}')

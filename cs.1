@@ -1,4 +1,4 @@
-.TH CS 1 "2026-07-27" "cs 1.9.2" "Claude Session Manager"
+.TH CS 1 "2026-09-28" "cs 1.10.0" "Claude Session Manager"
 .SH NAME
 cs \- manage Claude Code sessions across multiple hosts
 .SH SYNOPSIS
@@ -243,6 +243,13 @@ updating locally. Also installs the periodic sync if it is not set up (unless
 The downloaded bundle is verified against its published SHA\-256 checksum
 before it replaces the running binary. A missing, malformed, or mismatched
 checksum aborts the update and leaves the current binary untouched.
+.PP
+On its own, that checksum comes from the same origin as the bundle, so it
+catches a corrupted download but not a compromised repo. Set \fBmirrorUrl\fP
+in config (or \fBCS_MIRROR_URL\fP) to a second, independent host serving the
+same files: the update then proceeds only if both origins publish the
+identical checksum, and aborts if the mirror is unreachable, disagrees, or is
+on the same host as the primary.
 .RE
 .TP
 .BR "cs version" ", " "\-\-version"
@@ -315,6 +322,17 @@ Override the default repository URL for
 and
 .BR install-remote.sh .
 Useful for self-hosted GitLab or GitHub instances.
+.TP
+.B CS_MIRROR_URL
+A second, independent origin serving the same release files. When set,
+.B cs update
+and
+.B install-remote.sh
+require both origins to publish the identical bundle checksum, and abort if
+the mirror is unreachable, disagrees, or is on the same host as the repo.
+Overrides the
+.I mirrorUrl
+config setting.
 .TP
 .B CS_CONFIG_HOST
 SSH hostname to copy config from during install (default:
