@@ -12,6 +12,8 @@ import {
   escapeRegex,
   detectState,
   matchPrefix,
+  sameProjectCandidates,
+  parsePickChoice,
   shortId,
   tmuxName,
   shellQuote,
@@ -191,6 +193,65 @@ describe("matchPrefix", () => {
   test("exact prefix match", () => {
     const result = matchPrefix(records, "abc12345");
     expect(result).toHaveLength(1);
+  });
+});
+
+describe("sameProjectCandidates", () => {
+  const rec = (id: string, project: string, iso: string) => ({
+    session_id: id,
+    project_name: project,
+    updated_at: new Date(iso),
+  });
+
+  test("same project: returns all, newest first", () => {
+    const result = sameProjectCandidates([
+      rec("old", "cs", "2026-10-01T00:00:00Z"),
+      rec("new", "cs", "2026-10-03T00:00:00Z"),
+      rec("mid", "cs", "2026-10-02T00:00:00Z"),
+    ]);
+    expect(result?.map((r) => r.session_id)).toEqual(["new", "mid", "old"]);
+  });
+
+  test("mixed projects: null", () => {
+    const result = sameProjectCandidates([
+      rec("a", "cs", "2026-10-01T00:00:00Z"),
+      rec("b", "ai", "2026-10-02T00:00:00Z"),
+    ]);
+    expect(result).toBeNull();
+  });
+
+  test("empty input: null", () => {
+    expect(sameProjectCandidates([])).toBeNull();
+  });
+
+  test("does not mutate input order", () => {
+    const input = [rec("old", "cs", "2026-10-01T00:00:00Z"), rec("new", "cs", "2026-10-02T00:00:00Z")];
+    sameProjectCandidates(input);
+    expect(input[0]!.session_id).toBe("old");
+  });
+});
+
+describe("parsePickChoice", () => {
+  test("empty / newline selects default (first)", () => {
+    expect(parsePickChoice("", 3)).toBe(0);
+    expect(parsePickChoice("\n", 3)).toBe(0);
+  });
+
+  test("valid 1-based number → 0-based index", () => {
+    expect(parsePickChoice("1\n", 3)).toBe(0);
+    expect(parsePickChoice(" 3 ", 3)).toBe(2);
+  });
+
+  test("out of range or non-numeric → null", () => {
+    expect(parsePickChoice("0", 3)).toBeNull();
+    expect(parsePickChoice("4", 3)).toBeNull();
+    expect(parsePickChoice("-1", 3)).toBeNull();
+    expect(parsePickChoice("2x", 3)).toBeNull();
+    expect(parsePickChoice("abc", 3)).toBeNull();
+  });
+
+  test("no candidates → null even for default", () => {
+    expect(parsePickChoice("", 0)).toBeNull();
   });
 });
 

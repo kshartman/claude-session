@@ -184,7 +184,7 @@ export const COMMANDS: CommandDoc[] = [
   {
     id: "attach",
     name: "cs attach",
-    args: "<id-or-name> [--host <name>]",
+    args: "<id-or-name> [--host <name>] [--latest]",
     summary: "Attach to session (local or remote)",
     details: [
       {
@@ -193,12 +193,16 @@ export const COMMANDS: CommandDoc[] = [
       {
         p: "Sessions can be identified by ID prefix (like git(1)), `/rename` name (exact match), or project name. When ambiguous, cs prefers the local host's session; use `--host` to disambiguate explicitly.",
       },
+      {
+        p: "If the matches are still ambiguous but all belong to the same project, cs lists them newest first and asks which to attach; pressing Enter picks the most recently active. `--latest` skips the question and attaches to the most recently active one (required when stdin is not a terminal). Matches spanning several projects are always an error.",
+      },
     ],
     examples: [
       "cs attach claude-session    # by /rename name",
       "cs attach 952d              # by ID prefix",
       "cs attach a4b9              # remote session — auto-SSH",
       "cs attach myapp --host dev  # disambiguate when same name on multiple hosts",
+      "cs attach myapp --latest    # several myapp sessions — take the newest",
     ],
   },
   {

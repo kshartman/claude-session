@@ -109,17 +109,20 @@ cs adopt claude-session --attach    # wrap and connect immediately
 cs adopt 952d --attach              # works with ID prefix too
 ```
 
-### `cs attach <id-or-name> [--host <name>]`
+### `cs attach <id-or-name> [--host <name>] [--latest]`
 
 Reconnect to a session. If it is on the local machine, attaches to its tmux session directly; if you are already inside tmux, uses `switch-client` to avoid nesting. If it is on a remote machine, cs ssh's there, creates the tmux session if needed, and attaches. Requires SSH key authentication for remote sessions.
 
 Sessions can be identified by ID prefix (like git), `/rename` name (exact match), or project name. When ambiguous, cs prefers the local host's session; use `--host` to disambiguate explicitly.
+
+If the matches are still ambiguous but all belong to the same project, cs lists them newest first and asks which to attach; pressing Enter picks the most recently active. `--latest` skips the question and attaches to the most recently active one (required when stdin is not a terminal). Matches spanning several projects are always an error.
 
 ```bash
 cs attach claude-session    # by /rename name
 cs attach 952d              # by ID prefix
 cs attach a4b9              # remote session — auto-SSH
 cs attach myapp --host dev  # disambiguate when same name on multiple hosts
+cs attach myapp --latest    # several myapp sessions — take the newest
 ```
 
 ### `cs kill <id-or-name> [--host <name>]`

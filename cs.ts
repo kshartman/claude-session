@@ -36,6 +36,8 @@ import {
   isKeepSignalProtected,
   detectState,
   matchPrefix,
+  sameProjectCandidates,
+  parsePickChoice,
   shortId,
   tmuxName,
   shellQuote,
@@ -630,10 +632,17 @@ async function cmdLaunch(
   );
 }
 
+/**
+ * Last-chance resolver for an ambiguous match (after local-host preference).
+ * Return the chosen record, or null to fall through to the ambiguity error.
+ */
+type AmbiguityPicker = (matches: SessionRecord[]) => SessionRecord | null;
+
 async function resolveSession(
   config: CsConfig,
   prefix: string,
-  host?: string | null
+  host?: string | null,
+  pick?: AmbiguityPicker
 ): Promise<SessionRecord> {
   return withDb(config, async (_db, sessions) => {
     // Build host filter
@@ -685,6 +694,9 @@ async function resolveSession(
         const local = matches.filter((m) => m.machine.toLowerCase() === getHostname(config).toLowerCase());
         if (local.length === 1) return local[0]!;
       }
+
+      const picked = pick?.(matches);
+      if (picked) return picked;
 
       console.error(`Ambiguous match for '${prefix}'. Did you mean:`);
       for (const m of matches) {
@@ -788,13 +800,57 @@ async function configureTmuxBar(
   }
 }
 
+/**
+ * Picker for `cs attach`: when every match is the same project, take the most
+ * recently active one (--latest) or ask, defaulting to it. Matches spanning
+ * projects, or no TTY to ask on, fall through to the ambiguity error.
+ */
+function attachPicker(config: CsConfig, latest: boolean): AmbiguityPicker {
+  return (matches) => {
+    const candidates = sameProjectCandidates(matches);
+    if (!candidates) return null;
+    if (latest) return candidates[0]!;
+    if (!process.stdin.isTTY) {
+      console.error(dim("No TTY to ask on — pass --latest to take the most recent."));
+      return null;
+    }
+
+    console.error(`Multiple ${bold(candidates[0]!.project_name)} sessions:`);
+    candidates.forEach((s, i) => {
+      const hostName = config.listFQDN ? s.machine : s.machine.split(".")[0]!;
+      console.error(
+        `  ${i + 1}) ${shortId(s.session_id)}  ${machineColor(hostName)}  ${stateColor(s.state)}  ` +
+          `${relativeTime(s.updated_at)}  ${s.title ?? ""}`
+      );
+    });
+    process.stderr.write(`Attach which? [1]: `);
+
+    let answer: string;
+    try {
+      const buf = Buffer.alloc(16);
+      const n = readSync(0, buf, 0, 16, null);
+      answer = buf.subarray(0, n).toString();
+    } catch {
+      console.error("\nAborted (no input available).");
+      process.exit(1);
+    }
+    const idx = parsePickChoice(answer, candidates.length);
+    if (idx === null) {
+      console.error(`Invalid choice '${answer.trim()}'. Aborted.`);
+      process.exit(1);
+    }
+    return candidates[idx]!;
+  };
+}
+
 async function cmdAttach(
   config: CsConfig,
   prefix: string,
-  host?: string | null
+  host: string | null,
+  latest: boolean
 ): Promise<void> {
   requireTmux();
-  const session = await resolveSession(config, prefix, host);
+  const session = await resolveSession(config, prefix, host, attachPicker(config, latest));
   const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
   const machine = getHostname(config);
 
@@ -2513,12 +2569,13 @@ async function main(): Promise<void> {
     case "attach": {
       const hostIdx = args.indexOf("--host");
       const host = hostIdx >= 0 ? (args[hostIdx + 1] ?? null) : null;
-      const prefix = args.filter((a) => a !== "--host" && a !== host)[1];
+      const latest = args.includes("--latest");
+      const prefix = args.filter((a) => a !== "--host" && a !== host && a !== "--latest")[1];
       if (!prefix) {
-        console.error("Usage: cs attach <id-or-name> [--host <name>]");
+        console.error("Usage: cs attach <id-or-name> [--host <name>] [--latest]");
         process.exit(1);
       }
-      await cmdAttach(config, prefix, host);
+      await cmdAttach(config, prefix, host, latest);
       break;
     }
 

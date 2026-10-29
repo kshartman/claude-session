@@ -87,7 +87,7 @@ take a session you started normally and make it persistent. The session is
 resumed via \fBclaude \-\-resume\fP inside a detached tmux. With
 \fB\-\-attach\fP, connects immediately after adopting.
 .TP
-.BI "cs attach" " <id\-or\-name> [\-\-host <name>]"
+.BI "cs attach" " <id\-or\-name> [\-\-host <name>] [\-\-latest]"
 Reconnect to a session. If it is on the local machine, attaches to its tmux
 session directly; if you are already inside tmux, uses \fBswitch\-client\fP to
 avoid nesting. If it is on a remote machine, cs \fBssh\fP(1)'s there, creates
@@ -98,6 +98,12 @@ remote sessions.
 Sessions can be identified by ID prefix (like \fBgit\fP(1)), \fB/rename\fP
 name (exact match), or project name. When ambiguous, cs prefers the local
 host's session; use \fB\-\-host\fP to disambiguate explicitly.
+.PP
+If the matches are still ambiguous but all belong to the same project, cs
+lists them newest first and asks which to attach; pressing Enter picks the
+most recently active. \fB\-\-latest\fP skips the question and attaches to the
+most recently active one (required when stdin is not a terminal). Matches
+spanning several projects are always an error.
 .RE
 .TP
 .BI "cs kill" " <id\-or\-name> [\-\-host <name>]"

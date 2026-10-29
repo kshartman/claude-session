@@ -525,6 +525,30 @@ export function matchPrefix<T extends { session_id: string }>(
   return records.filter((r) => r.session_id.startsWith(prefix));
 }
 
+/**
+ * When ambiguous matches all belong to one project, return them newest first
+ * (the pick order for `cs attach`); null when they span projects.
+ */
+export function sameProjectCandidates<T extends { project_name: string; updated_at: Date }>(
+  records: T[]
+): T[] | null {
+  const first = records[0];
+  if (!first || records.some((r) => r.project_name !== first.project_name)) return null;
+  return [...records].sort((a, b) => b.updated_at.getTime() - a.updated_at.getTime());
+}
+
+/**
+ * Parse a 1-based pick from a numbered list. Empty input selects the default
+ * (index 0). Returns the 0-based index, or null for anything out of range.
+ */
+export function parsePickChoice(answer: string, count: number): number | null {
+  const trimmed = answer.trim();
+  if (trimmed === "") return count > 0 ? 0 : null;
+  if (!/^\d+$/.test(trimmed)) return null;
+  const n = parseInt(trimmed, 10);
+  return n >= 1 && n <= count ? n - 1 : null;
+}
+
 export function shortId(sessionId: string): string {
   return sessionId.slice(0, 8);
 }
