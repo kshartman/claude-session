@@ -205,17 +205,17 @@ describe("sameProjectCandidates", () => {
 
   test("same project: returns all, newest first", () => {
     const result = sameProjectCandidates([
-      rec("old", "cs", "2026-10-01T00:00:00Z"),
-      rec("new", "cs", "2026-10-03T00:00:00Z"),
-      rec("mid", "cs", "2026-10-02T00:00:00Z"),
+      rec("old", "myapp", "2026-10-01T00:00:00Z"),
+      rec("new", "myapp", "2026-10-03T00:00:00Z"),
+      rec("mid", "myapp", "2026-10-02T00:00:00Z"),
     ]);
     expect(result?.map((r) => r.session_id)).toEqual(["new", "mid", "old"]);
   });
 
   test("mixed projects: null", () => {
     const result = sameProjectCandidates([
-      rec("a", "cs", "2026-10-01T00:00:00Z"),
-      rec("b", "ai", "2026-10-02T00:00:00Z"),
+      rec("a", "myapp", "2026-10-01T00:00:00Z"),
+      rec("b", "otherapp", "2026-10-02T00:00:00Z"),
     ]);
     expect(result).toBeNull();
   });
@@ -225,7 +225,7 @@ describe("sameProjectCandidates", () => {
   });
 
   test("does not mutate input order", () => {
-    const input = [rec("old", "cs", "2026-10-01T00:00:00Z"), rec("new", "cs", "2026-10-02T00:00:00Z")];
+    const input = [rec("old", "myapp", "2026-10-01T00:00:00Z"), rec("new", "myapp", "2026-10-02T00:00:00Z")];
     sameProjectCandidates(input);
     expect(input[0]!.session_id).toBe("old");
   });

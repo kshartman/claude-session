@@ -28583,7 +28583,7 @@ var COMMANDS = [
   {
     id: "attach",
     name: "cs attach",
-    args: "<id-or-name> [--host <name>]",
+    args: "<id-or-name> [--host <name>] [--latest]",
     summary: "Attach to session (local or remote)",
     details: [
       {
@@ -28591,13 +28591,17 @@ var COMMANDS = [
       },
       {
         p: "Sessions can be identified by ID prefix (like git(1)), `/rename` name (exact match), or project name. When ambiguous, cs prefers the local host's session; use `--host` to disambiguate explicitly."
+      },
+      {
+        p: "If the matches are still ambiguous but all belong to the same project, cs lists them newest first and asks which to attach; pressing Enter picks the most recently active. `--latest` skips the question and attaches to the most recently active one (required when stdin is not a terminal). Matches spanning several projects are always an error."
       }
     ],
     examples: [
       "cs attach claude-session    # by /rename name",
       "cs attach 952d              # by ID prefix",
       "cs attach a4b9              # remote session \u2014 auto-SSH",
-      "cs attach myapp --host dev  # disambiguate when same name on multiple hosts"
+      "cs attach myapp --host dev  # disambiguate when same name on multiple hosts",
+      "cs attach myapp --latest    # several myapp sessions \u2014 take the newest"
     ]
   },
   {
@@ -28898,7 +28902,7 @@ var COMMANDS = [
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.10.0";
+var VERSION = "1.11.0";
 var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29245,6 +29249,21 @@ function detectState(paneContent) {
 }
 function matchPrefix(records, prefix) {
   return records.filter((r) => r.session_id.startsWith(prefix));
+}
+function sameProjectCandidates(records) {
+  const first = records[0];
+  if (!first || records.some((r) => r.project_name !== first.project_name))
+    return null;
+  return [...records].sort((a, b) => b.updated_at.getTime() - a.updated_at.getTime());
+}
+function parsePickChoice(answer, count) {
+  const trimmed = answer.trim();
+  if (trimmed === "")
+    return count > 0 ? 0 : null;
+  if (!/^\d+$/.test(trimmed))
+    return null;
+  const n = parseInt(trimmed, 10);
+  return n >= 1 && n <= count ? n - 1 : null;
 }
 function shortId(sessionId) {
   return sessionId.slice(0, 8);
@@ -29733,7 +29752,7 @@ async function cmdLaunch(_config, project, prompt) {
 ` + `Attach with: ${bold(`tmux attach -t ${tmuxSession}`)}
 ` + `Run ${bold("cs sync")} to register in MongoDB, then use ${bold("cs attach")}`);
 }
-async function resolveSession(config, prefix, host) {
+async function resolveSession(config, prefix, host, pick) {
   return withDb(config, async (_db, sessions) => {
     const hostFilter = {};
     if (host) {
@@ -29761,6 +29780,9 @@ async function resolveSession(config, prefix, host) {
         if (local.length === 1)
           return local[0];
       }
+      const picked = pick?.(matches);
+      if (picked)
+        return picked;
       console.error(`Ambiguous match for '${prefix}'. Did you mean:`);
       for (const m of matches) {
         console.error(`  ${m.project_name}  ${m.session_id}  ${m.machine}  ${m.title ?? ""}`);
@@ -29840,9 +29862,44 @@ async function configureTmuxBar(config, tmuxSession) {
 `);
   }
 }
-async function cmdAttach(config, prefix, host) {
+function attachPicker(config, latest) {
+  return (matches) => {
+    const candidates = sameProjectCandidates(matches);
+    if (!candidates)
+      return null;
+    if (latest)
+      return candidates[0];
+    if (!process.stdin.isTTY) {
+      console.error(dim("No TTY to ask on \u2014 pass --latest to take the most recent."));
+      return null;
+    }
+    console.error(`Multiple ${bold(candidates[0].project_name)} sessions:`);
+    candidates.forEach((s, i) => {
+      const hostName = config.listFQDN ? s.machine : s.machine.split(".")[0];
+      console.error(`  ${i + 1}) ${shortId(s.session_id)}  ${machineColor(hostName)}  ${stateColor(s.state)}  ` + `${relativeTime(s.updated_at)}  ${s.title ?? ""}`);
+    });
+    process.stderr.write(`Attach which? [1]: `);
+    let answer;
+    try {
+      const buf = Buffer.alloc(16);
+      const n = readSync(0, buf, 0, 16, null);
+      answer = buf.subarray(0, n).toString();
+    } catch {
+      console.error(`
+Aborted (no input available).`);
+      process.exit(1);
+    }
+    const idx = parsePickChoice(answer, candidates.length);
+    if (idx === null) {
+      console.error(`Invalid choice '${answer.trim()}'. Aborted.`);
+      process.exit(1);
+    }
+    return candidates[idx];
+  };
+}
+async function cmdAttach(config, prefix, host, latest) {
   requireTmux();
-  const session = await resolveSession(config, prefix, host);
+  const session = await resolveSession(config, prefix, host, attachPicker(config, latest));
   const tmuxSession = session.tmux_session ?? tmuxName(session.session_id, session.title, session.project_name);
   const machine = getHostname(config);
   const insideTmux = !!process.env["TMUX"];
@@ -31166,12 +31223,13 @@ async function main() {
     case "attach": {
       const hostIdx = args.indexOf("--host");
       const host = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
-      const prefix = args.filter((a) => a !== "--host" && a !== host)[1];
+      const latest = args.includes("--latest");
+      const prefix = args.filter((a) => a !== "--host" && a !== host && a !== "--latest")[1];
       if (!prefix) {
-        console.error("Usage: cs attach <id-or-name> [--host <name>]");
+        console.error("Usage: cs attach <id-or-name> [--host <name>] [--latest]");
         process.exit(1);
       }
-      await cmdAttach(config, prefix, host);
+      await cmdAttach(config, prefix, host, latest);
       break;
     }
     case "kill": {
