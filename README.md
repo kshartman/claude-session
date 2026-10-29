@@ -215,7 +215,7 @@ cs gc --yes                    # soft-delete them
 
 ### `cs purge <pattern>... [--yes] [--all] [--host <name>] [--deleted]`
 
-Hard delete sessions — removes MongoDB records, JSONL files, and session directories. **Irreversible.** Without `--yes`, shows what would be deleted.
+Hard delete sessions — removes MongoDB records, JSONL files, and session directories, and stops the session's tmux session only if it is the session running there (never another session that merely shares its name). **Irreversible.** Without `--yes`, shows what would be deleted.
 
 Sessions on other hosts are purged there over ssh, after the one confirmation given here: each host is sent the exact session IDs you saw, never the pattern, so it cannot widen the set. A host that cannot be reached is reported and its sessions are left alone; cs then exits 1.
 

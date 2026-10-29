@@ -625,6 +625,16 @@ export function groupByMachine<T extends { machine: string }>(records: readonly 
   return groups;
 }
 
+/**
+ * The tmux session purge may kill for this record: its own tmux_session, and
+ * only while sync marks it running (sync sets tmux_session only for the one
+ * session that owns a tmux session — see tmuxOwners). Never derived from the
+ * name, which duplicates share.
+ */
+export function tmuxToKill(s: Pick<SessionRecord, "tmux_session" | "state">): string | null {
+  return s.tmux_session && isRunning(s) ? s.tmux_session : null;
+}
+
 // --- tmux session name ---
 
 export function tmuxName(

@@ -187,8 +187,9 @@ can be restored with \fBcs rm \-\-undo <id>\fP.
 .TP
 .BI "cs purge" " <pattern>... [\-\-yes] [\-\-all] [\-\-host <name>] [\-\-deleted]"
 Hard delete sessions \(em removes MongoDB records, JSONL files, and session
-directories. \fBIrreversible.\fP Without \fB\-\-yes\fP, shows what would be
-deleted.
+directories, and stops the session's tmux session only if it is the session
+running there (never another session that merely shares its name).
+\fBIrreversible.\fP Without \fB\-\-yes\fP, shows what would be deleted.
 .RS
 .PP
 Sessions on other hosts are purged there over \fBssh\fP(1), after the one

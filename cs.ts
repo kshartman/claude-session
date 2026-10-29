@@ -36,6 +36,7 @@ import {
   isKeepSignalProtected,
   detectState,
   matchPrefix,
+  tmuxToKill,
   remotePurgeCommand,
   groupByMachine,
   gcPlan,
@@ -1566,11 +1567,12 @@ function purgeOneSession(
     deleted.push(sessionDir + "/");
   }
 
-  // Kill tmux if running
-  const tmuxSession = tmuxName(session.session_id, session.title, session.project_name);
-  Bun.spawnSync(["tmux", "kill-session", "-t", tmuxSession], { stdout: "pipe", stderr: "pipe" });
-  if (session.tmux_session) {
-    Bun.spawnSync(["tmux", "kill-session", "-t", session.tmux_session], { stdout: "pipe", stderr: "pipe" });
+  // Kill its tmux session only if sync attributed one to this exact session
+  // (it owns it and is running). Never by name: duplicates share a /rename
+  // name, so a name match can be a different, live session.
+  const owned = tmuxToKill(session);
+  if (owned && Bun.which("tmux")) {
+    Bun.spawnSync(["tmux", "kill-session", "-t", owned], { stdout: "pipe", stderr: "pipe" });
   }
 
   return { jsonlPath, sessionDir, deleted };
@@ -1698,7 +1700,7 @@ async function cmdPurge(
     }
     if (localMatches.length > 0) console.log(`\nPurged ${red(String(purged))} session(s) on this host.`);
 
-    if (remoteMatches.length > 0 && !(await purgeOnRemoteHosts(remoteMatches))) process.exit(1);
+    if (remoteMatches.length > 0 && !(await purgeOnRemoteHosts(config, remoteMatches))) process.exit(1);
   });
 }
 
@@ -1726,7 +1728,7 @@ function confirmTyped(prompt: string): boolean {
  * host gets the exact session IDs (remotePurgeCommand). Returns false if any
  * host could not be reached or reported an error; the rest still proceed.
  */
-async function purgeOnRemoteHosts(records: SessionRecord[]): Promise<boolean> {
+async function purgeOnRemoteHosts(config: CsConfig, records: SessionRecord[]): Promise<boolean> {
   if (process.env["CS_NO_REMOTE"]) {
     // We are already the remote end of a purge; never fan out again.
     console.error(`Cannot purge ${records.length} session(s) on other hosts from here. Run cs purge there.`);
@@ -1737,7 +1739,7 @@ async function purgeOnRemoteHosts(records: SessionRecord[]): Promise<boolean> {
     console.log(`\n${machineColor(host.split(".")[0]!)}: purging ${group.length} session(s) over SSH...`);
     const run = await sshTry(
       sshHostCandidates(host),
-      remotePurgeCommand(REMOTE_CS_PATH, group.map((g) => g.session_id))
+      remotePurgeCommand(remoteCsPath(config), group.map((g) => g.session_id))
     );
     for (const line of run.stdout.trim().split("\n").filter(Boolean)) console.log(`  ${line}`);
     if (run.exitCode !== 0) {
@@ -2313,8 +2315,13 @@ async function cmdUpdate(force = false): Promise<void> {
   ensureCron();
 }
 
-/** PATH prefix so non-interactive SSH shells can find cs and bun. */
-const REMOTE_CS_PATH = "PATH=$HOME/.local/bin:$HOME/.bun/bin:$PATH";
+/**
+ * PATH prefix so non-interactive SSH shells find cs, bun, and tmux — the same
+ * config.remotePath the attach scripts export (includes /opt/homebrew/bin).
+ */
+function remoteCsPath(config: CsConfig): string {
+  return `PATH="${config.remotePath}:$PATH"`;
+}
 
 interface SshResult {
   host: string;
@@ -2356,17 +2363,18 @@ type UpdateOutcome = "updated" | "unreachable" | "failed";
  * code alone.
  */
 async function updateHost(
+  config: CsConfig,
   host: string,
   target: string | null
 ): Promise<{ outcome: UpdateOutcome; line: string }> {
   const tryHosts = sshHostCandidates(host);
-  const run = await sshTry(tryHosts, `${REMOTE_CS_PATH} cs update`);
+  const run = await sshTry(tryHosts, `${remoteCsPath(config)} cs update`);
   if (run.exitCode === 0) {
     return { outcome: "updated", line: run.stdout.trim().split("\n").pop() ?? "done" };
   }
 
   const reason = firstLine(run.stderr) || `exit ${run.exitCode}`;
-  const probe = await sshTry(tryHosts, `${REMOTE_CS_PATH} cs version`);
+  const probe = await sshTry(tryHosts, `${remoteCsPath(config)} cs version`);
   if (probe.exitCode !== 0) {
     return { outcome: "unreachable", line: dim(`unreachable — ${reason}`) };
   }
@@ -2406,7 +2414,7 @@ async function cmdUpdateAll(config: CsConfig): Promise<void> {
   const tally: Record<UpdateOutcome, number> = { updated: 0, unreachable: 0, failed: 0 };
   for (const host of remoteHosts) {
     process.stdout.write(`  ${host.split(".")[0]!}: `);
-    const { outcome, line } = await updateHost(host, target);
+    const { outcome, line } = await updateHost(config, host, target);
     tally[outcome] += 1;
     console.log(line);
   }

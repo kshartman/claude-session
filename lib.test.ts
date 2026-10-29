@@ -12,6 +12,7 @@ import {
   escapeRegex,
   detectState,
   matchPrefix,
+  tmuxToKill,
   remotePurgeCommand,
   groupByMachine,
   gcPlan,
@@ -845,5 +846,22 @@ describe("groupByMachine", () => {
     ]);
     expect([...g.keys()]).toEqual(["host1", "host2"]);
     expect(g.get("host2")!.map((r) => r.id)).toEqual([1, 3]);
+  });
+});
+
+describe("tmuxToKill", () => {
+  test("kills only the tmux session sync attributed to this running session", () => {
+    expect(tmuxToKill({ tmux_session: "myapp", state: "IDLE" })).toBe("myapp");
+    expect(tmuxToKill({ tmux_session: "myapp", state: "WORKING" })).toBe("myapp");
+  });
+
+  test("a stale duplicate sharing the live session's name kills nothing", () => {
+    // sync gives tmux_session only to the owner; the stale one has none
+    expect(tmuxToKill({ tmux_session: null, state: null })).toBeNull();
+  });
+
+  test("a leftover tmux_session on a stopped record kills nothing", () => {
+    expect(tmuxToKill({ tmux_session: "myapp", state: null })).toBeNull();
+    expect(tmuxToKill({ tmux_session: "myapp", state: "DEAD" })).toBeNull();
   });
 });
