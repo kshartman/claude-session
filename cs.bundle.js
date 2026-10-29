@@ -28902,7 +28902,7 @@ var COMMANDS = [
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.11.0";
+var VERSION = "1.11.1";
 var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29291,6 +29291,9 @@ function tmuxName(sessionId, title, projectName) {
     return `${projectName}-${shortId(sessionId)}`;
   }
   return shortId(sessionId);
+}
+function unexpectedArgs(args, allowed) {
+  return args.filter((a) => !allowed.includes(a));
 }
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -31145,6 +31148,12 @@ async function main() {
     return;
   }
   if (command === "update") {
+    const unexpected = unexpectedArgs(args.slice(1), ["--all", "--force"]);
+    if (unexpected.length > 0) {
+      console.error(`Unknown argument(s) for cs update: ${unexpected.join(" ")}`);
+      console.error("Usage: cs update [--force] [--all]");
+      process.exit(1);
+    }
     if (args.includes("--all")) {
       let config;
       try {
