@@ -152,8 +152,11 @@ path, title, \fB/rename\fP name (if any), tag, state, message count,
 timestamps, tmux session name, summary, and schema version.
 .TP
 .B cs hosts
-List every host that has synced sessions, with session counts and when each
-was last seen.
+List every known host: its live (not soft\-deleted) session count, when a
+session there was last active, when the host last ran \fBcs sync\fP, and the
+cs version it runs. Hosts register themselves on every sync, so a host with no
+sessions is still listed; \fBold\fP means it has not synced since upgrading to
+a cs that registers hosts.
 .TP
 .BI "cs rm" " <id\-or\-name>"
 Soft\-delete a session: the record is marked with a \fBdeleted_at\fP
@@ -252,8 +255,10 @@ on that host at once.
 Check for a new version on the remote server and, if one is available,
 download the updated bundle and man page. \fB\-\-force\fP re\-downloads even
 when the version matches; \fB\-\-all\fP updates all known hosts via SSH after
-updating locally. Also installs the periodic sync if it is not set up (unless
-\fBnoCron\fP is set in config).
+updating locally \(em every host registered by \fBcs sync\fP, even one with no
+sessions, plus hosts with sessions that have not registered yet. A registered
+host that has not synced in 30 days is skipped and named. Also installs the
+periodic sync if it is not set up (unless \fBnoCron\fP is set in config).
 .RS
 .PP
 The downloaded bundle is verified against its published SHA\-256 checksum

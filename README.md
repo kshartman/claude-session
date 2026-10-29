@@ -172,7 +172,7 @@ Display the full record for a single session: session ID, machine, project path,
 
 ### `cs hosts`
 
-List every host that has synced sessions, with session counts and when each was last seen.
+List every known host: its live (not soft-deleted) session count, when a session there was last active, when the host last ran `cs sync`, and the cs version it runs. Hosts register themselves on every sync, so a host with no sessions is still listed; `old` means it has not synced since upgrading to a cs that registers hosts.
 
 ### `cs rm <id-or-name>`
 
@@ -265,7 +265,7 @@ Because the agent is shared, stopping it cuts SSH access for every cs session on
 
 ### `cs update [--force] [--all]`
 
-Check for a new version on the remote server and, if one is available, download the updated bundle and man page. `--force` re-downloads even when the version matches; `--all` updates all known hosts via SSH after updating locally. Also installs the periodic sync if it is not set up (unless `noCron` is set in config).
+Check for a new version on the remote server and, if one is available, download the updated bundle and man page. `--force` re-downloads even when the version matches; `--all` updates all known hosts via SSH after updating locally — every host registered by `cs sync`, even one with no sessions, plus hosts with sessions that have not registered yet. A registered host that has not synced in 30 days is skipped and named. Also installs the periodic sync if it is not set up (unless `noCron` is set in config).
 
 The downloaded bundle is verified against its published SHA-256 checksum before it replaces the running binary. A missing, malformed, or mismatched checksum aborts the update and leaves the current binary untouched.
 

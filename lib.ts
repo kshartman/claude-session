@@ -26,6 +26,21 @@ export interface SessionRecord {
   deleted_at: Date | null;
 }
 
+/**
+ * One per host, upserted by every `cs sync` (collection "hosts"), so a host
+ * with no sessions is still known to `update --all`.
+ */
+export interface HostRecord {
+  /** getHostname() of that host — the same value as SessionRecord.machine. */
+  host: string;
+  /** When that host last ran `cs sync`. */
+  last_seen: Date;
+  /** The cs VERSION it ran. */
+  version: string;
+  /** process.platform, e.g. "linux" or "darwin". */
+  platform: string;
+}
+
 export interface CsConfig {
   mongoUri: string;
   showDetachHint?: boolean;
@@ -109,6 +124,40 @@ export function sshHostCandidates(host: string): string[] {
   const candidates = [host, host.toLowerCase()];
   if (short !== host) candidates.push(short, short.toLowerCase());
   return [...new Set(candidates)];
+}
+
+/** Hosts `update --all` skips once they have not synced for this long. */
+export const FLEET_MAX_AGE_DAYS = 30;
+
+/**
+ * Remote hosts for `update --all`: registered hosts seen since `cutoff`, plus
+ * hosts that have sessions but no registration yet (still on a cs that
+ * predates the hosts collection). Registered hosts older than the cutoff are
+ * returned as `stale` instead. Excludes the local host; case-insensitive.
+ */
+export function fleetHosts(
+  known: {
+    registered: readonly Pick<HostRecord, "host" | "last_seen">[];
+    sessionHosts: readonly string[];
+    local: string;
+  },
+  cutoff: Date
+): { targets: string[]; stale: string[] } {
+  const key = (h: string): string => h.toLowerCase();
+  const local = key(known.local);
+  const registered = new Set(known.registered.map((r) => key(r.host)));
+  const targets = new Map<string, string>();
+  const stale: string[] = [];
+  for (const r of known.registered) {
+    if (key(r.host) === local) continue;
+    if (r.last_seen.getTime() < cutoff.getTime()) stale.push(r.host);
+    else targets.set(key(r.host), r.host);
+  }
+  for (const h of known.sessionHosts) {
+    if (key(h) !== local && !registered.has(key(h))) targets.set(key(h), h);
+  }
+  const byName = (a: string, b: string): number => a.localeCompare(b);
+  return { targets: [...targets.values()].sort(byName), stale: stale.sort(byName) };
 }
 
 /** Pull a semver out of `cs version` output ("cs v1.9.1" → "1.9.1"). */

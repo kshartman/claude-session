@@ -78,6 +78,24 @@ type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";
 
 Upsert key: `{ session_id, machine }` — idempotent, safe to run on every login.
 
+### Hosts collection
+
+Every `cs sync` upserts its host into the `hosts` collection, so `cs update --all`
+and `cs hosts` know a host even when it has no sessions (a host used to vanish
+from the fleet once its last session was purged).
+
+```typescript
+interface HostRecord {
+  host: string;      // getHostname() — same value as SessionRecord.machine
+  last_seen: Date;   // last cs sync
+  version: string;   // cs VERSION it ran
+  platform: string;  // process.platform
+}
+```
+
+Index: `{ host }` unique. `update --all` targets hosts seen within 30 days, plus
+session hosts not yet registered (still on an older cs).
+
 ### Indexes
 
 - `{ session_id, machine }` — unique, upsert key

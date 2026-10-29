@@ -18,6 +18,7 @@ import { createHash } from "crypto";
 import { ARG_SPECS, COMMANDS, LIST_OPTIONS } from "./commands";
 import {
   type SessionRecord,
+  type HostRecord,
   type SessionState,
   type CsConfig,
   VERSION,
@@ -36,6 +37,8 @@ import {
   isKeepSignalProtected,
   detectState,
   matchPrefix,
+  fleetHosts,
+  FLEET_MAX_AGE_DAYS,
   tmuxToKill,
   remotePurgeCommand,
   groupByMachine,
@@ -248,10 +251,31 @@ async function ensureIndexes(
 
 // --- sync ---
 
+/**
+ * Record that this host exists and which cs it runs. Runs on every sync,
+ * before any early return, so a host with no sessions stays in the fleet.
+ */
+async function registerHost(config: CsConfig): Promise<void> {
+  const host = getHostname(config);
+  await withDb(config, async (db) => {
+    const hosts = db.collection<HostRecord>("hosts");
+    await hosts.createIndex({ host: 1 }, { unique: true, background: true });
+    await hosts.updateOne(
+      { host },
+      { $set: { host, last_seen: new Date(), version: VERSION, platform: process.platform } },
+      { upsert: true }
+    );
+    // Same hostname migration as session records: drop short/FQDN variants
+    const variants = hostnameVariants(host);
+    if (variants.length > 0) await hosts.deleteMany({ host: { $in: variants } });
+  });
+}
+
 async function cmdSync(
   config: CsConfig,
   quiet: boolean
 ): Promise<void> {
+  await registerHost(config);
   const claudeDir = join(homedir(), ".claude", "projects");
   if (!existsSync(claudeDir)) {
     if (!quiet) console.log("~/.claude/projects/ not found — nothing to sync.");
@@ -1303,34 +1327,44 @@ async function cmdInfo(
 }
 
 async function cmdHosts(config: CsConfig): Promise<void> {
-  await withDb(config, async (_db, sessions) => {
-    const pipeline = [
-      {
-        $group: {
-          _id: "$machine",
-          count: { $sum: 1 },
-          last_seen: { $max: "$updated_at" },
-        },
-      },
-      { $sort: { last_seen: -1 as const } },
-    ];
+  await withDb(config, async (db, sessions) => {
+    const counts = await sessions
+      .aggregate<{ _id: string; count: number; last_active: Date }>([
+        { $match: { deleted_at: null } },
+        { $group: { _id: "$machine", count: { $sum: 1 }, last_active: { $max: "$updated_at" } } },
+      ])
+      .toArray();
+    const registered = await db.collection<HostRecord>("hosts").find({}).toArray();
 
-    const results = await sessions.aggregate(pipeline).toArray();
+    const rows = new Map<string, { host: string; count: number; lastActive: Date | null; reg: HostRecord | null }>();
+    for (const c of counts) rows.set(c._id.toLowerCase(), { host: c._id, count: c.count, lastActive: c.last_active, reg: null });
+    for (const r of registered) {
+      const row = rows.get(r.host.toLowerCase()) ?? { host: r.host, count: 0, lastActive: null, reg: null };
+      row.reg = r;
+      rows.set(r.host.toLowerCase(), row);
+    }
 
-    if (results.length === 0) {
+    if (rows.size === 0) {
       console.log("No hosts found. Run 'cs sync' first.");
       return;
     }
 
-    const headers = ["HOST", "SESSIONS", "LAST SEEN"];
-    const colWidths = [25, 10, 12];
-    const rows = results.map((r) => [
-      machineColor(config.listFQDN ? (r["_id"] as string) : (r["_id"] as string).split(".")[0]!),
-      String(r["count"]),
-      relativeTime(new Date(r["last_seen"] as Date)),
+    const sorted = [...rows.values()].sort((a, b) => {
+      const ta = Math.max(a.reg?.last_seen.getTime() ?? 0, a.lastActive?.getTime() ?? 0);
+      const tb = Math.max(b.reg?.last_seen.getTime() ?? 0, b.lastActive?.getTime() ?? 0);
+      return tb - ta;
+    });
+    const headers = ["HOST", "SESSIONS", "ACTIVE", "SYNCED", "CS"];
+    const colWidths = [25, 10, 12, 12, 10];
+    const table = sorted.map((r) => [
+      machineColor(config.listFQDN ? r.host : r.host.split(".")[0]!),
+      String(r.count),
+      r.lastActive ? relativeTime(r.lastActive) : dim("-"),
+      r.reg ? relativeTime(r.reg.last_seen) : dim("never"),
+      r.reg ? `v${r.reg.version}` : dim("old"),
     ]);
 
-    console.log(formatTable(headers, rows, colWidths));
+    console.log(formatTable(headers, table, colWidths));
   });
 }
 
@@ -2396,15 +2430,16 @@ async function cmdUpdateAll(config: CsConfig): Promise<void> {
   await cmdUpdate();
 
   const target = await fetchRemoteVersion().catch(() => null);
-  const hosts = await withDb(config, async (_db, sessions) =>
-    sessions.aggregate([{ $group: { _id: "$machine" } }]).toArray()
-  );
-  const localHost = getHostname(config);
-  const remoteHosts = hosts
-    .map((h) => h["_id"] as string)
-    .filter((h) => h.toLowerCase() !== localHost.toLowerCase())
-    .sort();
+  const { targets: remoteHosts, stale } = await withDb(config, async (db, sessions) => {
+    const registered = await db.collection<HostRecord>("hosts").find({}).toArray();
+    const sessionHosts = (await sessions.distinct("machine")).filter((m): m is string => typeof m === "string");
+    const cutoff = new Date(Date.now() - FLEET_MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
+    return fleetHosts({ registered, sessionHosts, local: getHostname(config) }, cutoff);
+  });
 
+  if (stale.length > 0) {
+    console.log(dim(`\nSkipping ${stale.length} host(s) not synced in ${FLEET_MAX_AGE_DAYS} days: ${stale.join(", ")}`));
+  }
   if (remoteHosts.length === 0) {
     console.log("\nNo remote hosts to update.");
     return;

@@ -12,6 +12,7 @@ import {
   escapeRegex,
   detectState,
   matchPrefix,
+  fleetHosts,
   tmuxToKill,
   remotePurgeCommand,
   groupByMachine,
@@ -863,5 +864,42 @@ describe("tmuxToKill", () => {
   test("a leftover tmux_session on a stopped record kills nothing", () => {
     expect(tmuxToKill({ tmux_session: "myapp", state: null })).toBeNull();
     expect(tmuxToKill({ tmux_session: "myapp", state: "DEAD" })).toBeNull();
+  });
+});
+
+// --- fleet hosts ---
+
+describe("fleetHosts", () => {
+  const cutoff = new Date("2026-10-01T00:00:00Z");
+  const fresh = new Date("2026-10-20T00:00:00Z");
+  const old = new Date("2026-08-01T00:00:00Z");
+
+  test("a registered host with no sessions is still a target", () => {
+    const r = fleetHosts({ registered: [{ host: "host2", last_seen: fresh }], sessionHosts: [], local: "host1" }, cutoff);
+    expect(r.targets).toEqual(["host2"]);
+  });
+
+  test("unregistered session hosts (older cs) are included", () => {
+    const r = fleetHosts({ registered: [], sessionHosts: ["host3"], local: "host1" }, cutoff);
+    expect(r.targets).toEqual(["host3"]);
+  });
+
+  test("local host is excluded, case-insensitively", () => {
+    const r = fleetHosts({ registered: [{ host: "HOST1", last_seen: fresh }], sessionHosts: ["host1"], local: "host1" }, cutoff);
+    expect(r.targets).toEqual([]);
+  });
+
+  test("stale registered hosts are skipped even if they still have sessions", () => {
+    const r = fleetHosts({ registered: [{ host: "gone", last_seen: old }], sessionHosts: ["gone"], local: "host1" }, cutoff);
+    expect(r.targets).toEqual([]);
+    expect(r.stale).toEqual(["gone"]);
+  });
+
+  test("registered and session spellings of one host dedupe, sorted", () => {
+    const r = fleetHosts(
+      { registered: [{ host: "Beta", last_seen: fresh }], sessionHosts: ["beta", "alpha"], local: "host1" },
+      cutoff
+    );
+    expect(r.targets).toEqual(["alpha", "Beta"]);
   });
 });
