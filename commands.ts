@@ -17,6 +17,8 @@
 //   options   → man page + README
 //   examples  → README only (cs.1 keeps its own hand-written EXAMPLES section)
 
+import type { ArgSpec } from "./lib";
+
 export interface DefItem {
   /** Flag or label, e.g. "--host <name>" or "WORKING". */
   term: string;
@@ -498,3 +500,42 @@ export const COMMANDS: CommandDoc[] = [
     details: [{ p: "Display the usage summary and exit." }],
   },
 ];
+
+/**
+ * What each command accepts after its command word, keyed by that word ("" is
+ * the bare dashboard). `main()` in cs.ts rejects anything else via checkArgs.
+ * lib.test.ts checks every flag here against the docs above.
+ */
+export const ARG_SPECS: Record<string, ArgSpec> = {
+  "": { flags: ["--orphans"], optionalValues: ["--sort"], positionals: 0 },
+  sync: { flags: ["--quiet"], positionals: 0 },
+  list: {
+    flags: ["--local"],
+    values: ["--host", "--project", "--limit"],
+    optionalValues: ["--sort"],
+    positionals: 0,
+  },
+  launch: { positionals: "rest" },
+  adopt: { flags: ["--attach"], positionals: 1 },
+  attach: { flags: ["--latest"], values: ["--host"], positionals: 1 },
+  kill: { flags: ["--all"], values: ["--host"], positionals: 1 },
+  resume: { positionals: 0 },
+  last: { positionals: 0 },
+  status: { positionals: 0 },
+  tag: { positionals: 2 },
+  info: { positionals: 1 },
+  hosts: { positionals: 0 },
+  rm: { flags: ["--undo"], positionals: 1 },
+  prune: { flags: ["--all"], values: ["--days"], positionals: 0 },
+  deleted: { flags: ["--local"], values: ["--host"], positionals: 0 },
+  gc: { flags: ["--yes"], positionals: 0 },
+  purge: {
+    flags: ["--yes", "--all", "--deleted", "--orphans"],
+    values: ["--host"],
+    positionals: "rest",
+  },
+  "add-key": { flags: ["--all"], values: ["--host"], positionals: 0 },
+  agent: { flags: ["--all"], values: ["--host"], positionals: 1 },
+  update: { flags: ["--all", "--force"], positionals: 0 },
+  version: { positionals: 0 },
+};

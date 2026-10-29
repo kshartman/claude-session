@@ -15,7 +15,7 @@ import {
 import { join, basename } from "path";
 import { homedir } from "os";
 import { createHash } from "crypto";
-import { COMMANDS, LIST_OPTIONS } from "./commands";
+import { ARG_SPECS, COMMANDS, LIST_OPTIONS } from "./commands";
 import {
   type SessionRecord,
   type SessionState,
@@ -36,7 +36,7 @@ import {
   isKeepSignalProtected,
   detectState,
   matchPrefix,
-  unexpectedArgs,
+  checkArgs,
   sameProjectCandidates,
   parsePickChoice,
   shortId,
@@ -2427,15 +2427,36 @@ ${bold("Environment:")}
 
 // --- main ---
 
+/**
+ * Exit 1 on an unknown option, a flag missing its value, or too many
+ * positionals. Unknown commands pass through to the dispatch's own error.
+ * A bare dashboard invocation starts with a flag, so all its args are checked.
+ */
+function rejectBadArgs(command: string | undefined, args: string[]): void {
+  const aliased = command === "--version" ? "version" : command;
+  const dashboard = aliased === undefined || aliased.startsWith("-");
+  const key = dashboard ? "" : aliased;
+  const spec = ARG_SPECS[key];
+  if (!spec) return;
+  const problem = checkArgs(dashboard ? args : args.slice(1), spec);
+  if (problem) {
+    console.error(`cs${key ? ` ${key}` : ""}: ${problem}`);
+    console.error(`Run ${bold("cs --help")} for usage.`);
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const command = args[0];
 
   // Commands that don't need config/db
-  if (command === "--help" || command === "-h") {
+  if (args.includes("--help") || args.includes("-h")) {
     printUsage();
     return;
   }
+
+  rejectBadArgs(command, args);
 
   if (command === "status") {
     await cmdStatus();
@@ -2479,12 +2500,6 @@ async function main(): Promise<void> {
   }
 
   if (command === "update") {
-    const unexpected = unexpectedArgs(args.slice(1), ["--all", "--force"]);
-    if (unexpected.length > 0) {
-      console.error(`Unknown argument(s) for cs update: ${unexpected.join(" ")}`);
-      console.error("Usage: cs update [--force] [--all]");
-      process.exit(1);
-    }
     if (args.includes("--all")) {
       let config: CsConfig;
       try {

@@ -12,7 +12,7 @@ import {
   escapeRegex,
   detectState,
   matchPrefix,
-  unexpectedArgs,
+  checkArgs,
   sameProjectCandidates,
   parsePickChoice,
   shortId,
@@ -33,6 +33,7 @@ import {
   crossCheckChecksums,
   firstLine,
 } from "./lib";
+import { ARG_SPECS, COMMANDS } from "./commands";
 
 // --- config ---
 
@@ -594,20 +595,80 @@ describe("colors", () => {
 
 // --- argument checks ---
 
-describe("unexpectedArgs", () => {
-  const allowed = ["--all", "--force"];
+describe("checkArgs", () => {
+  const spec = {
+    flags: ["--all", "--yes"],
+    values: ["--host"],
+    optionalValues: ["--sort"],
+    positionals: 1,
+  } as const;
 
-  test("all allowed → empty", () => {
-    expect(unexpectedArgs(["--all", "--force"], allowed)).toEqual([]);
-    expect(unexpectedArgs([], allowed)).toEqual([]);
+  test("accepts known flags, values, and positionals in any order", () => {
+    expect(checkArgs([], spec)).toBeNull();
+    expect(checkArgs(["--all", "--host", "dev", "abc", "--yes"], spec)).toBeNull();
+    expect(checkArgs(["abc", "--sort"], spec)).toBeNull();
+    expect(checkArgs(["--sort", "title"], spec)).toBeNull();
   });
 
-  test("typo and positional are reported in order", () => {
-    expect(unexpectedArgs(["--al", "--force", "host1"], allowed)).toEqual(["--al", "host1"]);
+  test("rejects unknown and near-miss flags", () => {
+    expect(checkArgs(["--al"], spec)).toBe("unknown option --al");
+    expect(checkArgs(["--All"], spec)).toBe("unknown option --All");
+    expect(checkArgs(["-all"], spec)).toBe("unknown option -all");
+    expect(checkArgs(["-"], spec)).toBe("unknown option -");
   });
 
-  test("near-miss spellings are not accepted", () => {
-    expect(unexpectedArgs(["--All"], allowed)).toEqual(["--All"]);
-    expect(unexpectedArgs(["-all"], allowed)).toEqual(["-all"]);
+  test("value flag without a value is an error", () => {
+    expect(checkArgs(["--host"], spec)).toBe("--host needs a value");
+    expect(checkArgs(["--host", "--all"], spec)).toBe("--host needs a value");
+  });
+
+  test("a value is not counted as a positional", () => {
+    expect(checkArgs(["--host", "dev", "abc"], spec)).toBeNull();
+  });
+
+  test("optional value consumes a following positional", () => {
+    // `--sort title extra` → title is the sort value, extra is the 1 positional
+    expect(checkArgs(["--sort", "title", "extra"], spec)).toBeNull();
+  });
+
+  test("too many positionals names the first extra one", () => {
+    expect(checkArgs(["abc", "def", "ghi"], spec)).toBe("unexpected argument def");
+  });
+
+  test('"rest" allows any number of positionals', () => {
+    expect(checkArgs(["a", "b", "c"], { positionals: "rest" })).toBeNull();
+  });
+});
+
+describe("ARG_SPECS", () => {
+  // Every doc entry for a dispatch word: "cs purge", "cs purge --orphans", ...
+  function docText(key: string): string {
+    const base = key === "" ? "cs" : `cs ${key}`;
+    const parts: string[] = [];
+    for (const c of COMMANDS) {
+      if (c.name !== base && !c.name.startsWith(`${base} `)) continue;
+      if (key === "" && c.name !== "cs") continue;
+      parts.push(c.name, c.args ?? "", c.helpArgs ?? "");
+      for (const v of c.variants ?? []) parts.push(v.name, v.args ?? "");
+      for (const o of c.options ?? []) parts.push(o.term);
+    }
+    return parts.join(" ");
+  }
+
+  for (const [key, spec] of Object.entries(ARG_SPECS)) {
+    const flags = [...(spec.flags ?? []), ...(spec.values ?? []), ...(spec.optionalValues ?? [])];
+    test(`every flag for "cs ${key}" is documented`, () => {
+      const text = docText(key);
+      expect(text).not.toBe("");
+      for (const f of flags) {
+        expect(text).toMatch(new RegExp(`(^|[\\s\\[])${escapeRegex(f)}(?=[\\s\\]]|$)`));
+      }
+    });
+  }
+
+  test("every dispatched command has a spec", () => {
+    const words = COMMANDS.map((c) => c.name.split(" ")[1])
+      .filter((w): w is string => w !== undefined && !w.startsWith("-"));
+    for (const w of new Set(words)) expect(ARG_SPECS[w]).toBeDefined();
   });
 });

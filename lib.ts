@@ -602,12 +602,45 @@ export function tmuxName(
 
 // --- argument checks ---
 
+/** What a command accepts after its command word (see ARG_SPECS in commands.ts). */
+export interface ArgSpec {
+  /** Flags that stand alone. */
+  flags?: readonly string[];
+  /** Flags that consume the next argument as their value. */
+  values?: readonly string[];
+  /** Flags whose value is optional: the next argument is consumed unless it is a flag. */
+  optionalValues?: readonly string[];
+  /** Maximum positional arguments; "rest" for unlimited. */
+  positionals: number | "rest";
+}
+
 /**
- * Arguments not in `allowed`, in order. For commands that take only flags,
- * so a typo (`--al`) fails loudly instead of silently running the default.
+ * Validate a command's arguments against its spec, so a typo (`--al`) fails
+ * loudly instead of silently running the default. Returns an error message,
+ * or null when the arguments are acceptable.
  */
-export function unexpectedArgs(args: readonly string[], allowed: readonly string[]): string[] {
-  return args.filter((a) => !allowed.includes(a));
+export function checkArgs(args: readonly string[], spec: ArgSpec): string | null {
+  const positionals: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    const next = args[i + 1];
+    const nextIsValue = next !== undefined && !next.startsWith("-");
+    if (!a.startsWith("-")) {
+      positionals.push(a);
+    } else if (spec.values?.includes(a)) {
+      if (!nextIsValue) return `${a} needs a value`;
+      i++;
+    } else if (spec.optionalValues?.includes(a)) {
+      if (nextIsValue) i++;
+    } else if (!spec.flags?.includes(a)) {
+      return `unknown option ${a}`;
+    }
+  }
+  const max = spec.positionals;
+  if (max !== "rest" && positionals.length > max) {
+    return `unexpected argument ${positionals[max]}`;
+  }
+  return null;
 }
 
 // --- mongo filters ---
