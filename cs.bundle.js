@@ -28700,7 +28700,7 @@ var COMMANDS = [
     summary: "List hosts with session counts",
     details: [
       {
-        p: "List every host that has synced sessions, with session counts and when each was last seen."
+        p: "List every known host: its live (not soft-deleted) session count, when a session there was last active, when the host last ran `cs sync`, and the cs version it runs. Hosts register themselves on every sync, so a host with no sessions is still listed; `old` means it has not synced since upgrading to a cs that registers hosts."
       }
     ]
   },
@@ -28878,7 +28878,7 @@ var COMMANDS = [
     ],
     details: [
       {
-        p: "Check for a new version on the remote server and, if one is available, download the updated bundle and man page. `--force` re-downloads even when the version matches; `--all` updates all known hosts via SSH after updating locally. Also installs the periodic sync if it is not set up (unless `noCron` is set in config)."
+        p: "Check for a new version on the remote server and, if one is available, download the updated bundle and man page. `--force` re-downloads even when the version matches; `--all` updates all known hosts via SSH after updating locally \u2014 every host registered by `cs sync`, even one with no sessions, plus hosts with sessions that have not registered yet. A registered host that has not synced in 30 days is skipped and named. Also installs the periodic sync if it is not set up (unless `noCron` is set in config)."
       },
       {
         p: "The downloaded bundle is verified against its published SHA-256 checksum before it replaces the running binary. A missing, malformed, or mismatched checksum aborts the update and leaves the current binary untouched."
@@ -28940,7 +28940,7 @@ var ARG_SPECS = {
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.13.1";
+var VERSION = "1.14.0";
 var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -28994,6 +28994,28 @@ function sshHostCandidates(host) {
   if (short !== host)
     candidates.push(short, short.toLowerCase());
   return [...new Set(candidates)];
+}
+var FLEET_MAX_AGE_DAYS = 30;
+function fleetHosts(known, cutoff) {
+  const key = (h) => h.toLowerCase();
+  const local = key(known.local);
+  const registered = new Set(known.registered.map((r) => key(r.host)));
+  const targets = new Map;
+  const stale = [];
+  for (const r of known.registered) {
+    if (key(r.host) === local)
+      continue;
+    if (r.last_seen.getTime() < cutoff.getTime())
+      stale.push(r.host);
+    else
+      targets.set(key(r.host), r.host);
+  }
+  for (const h of known.sessionHosts) {
+    if (key(h) !== local && !registered.has(key(h)))
+      targets.set(key(h), h);
+  }
+  const byName = (a, b) => a.localeCompare(b);
+  return { targets: [...targets.values()].sort(byName), stale: stale.sort(byName) };
 }
 function parseVersionOutput(output) {
   return output.match(/\bv?(\d+\.\d+\.\d+)\b/)?.[1] ?? null;
@@ -29597,7 +29619,19 @@ async function ensureIndexes(sessions) {
   await sessions.createIndex({ machine: 1, updated_at: -1 }, { background: true });
   await sessions.createIndex({ project_name: 1 }, { background: true });
 }
+async function registerHost(config) {
+  const host = getHostname(config);
+  await withDb(config, async (db) => {
+    const hosts = db.collection("hosts");
+    await hosts.createIndex({ host: 1 }, { unique: true, background: true });
+    await hosts.updateOne({ host }, { $set: { host, last_seen: new Date, version: VERSION, platform: process.platform } }, { upsert: true });
+    const variants = hostnameVariants(host);
+    if (variants.length > 0)
+      await hosts.deleteMany({ host: { $in: variants } });
+  });
+}
 async function cmdSync(config, quiet) {
+  await registerHost(config);
   const claudeDir = join2(homedir2(), ".claude", "projects");
   if (!existsSync2(claudeDir)) {
     if (!quiet)
@@ -30356,30 +30390,39 @@ async function cmdInfo(config, prefix) {
   console.log(`  Synced:    ${session.synced_at.toISOString()}`);
 }
 async function cmdHosts(config) {
-  await withDb(config, async (_db, sessions) => {
-    const pipeline = [
-      {
-        $group: {
-          _id: "$machine",
-          count: { $sum: 1 },
-          last_seen: { $max: "$updated_at" }
-        }
-      },
-      { $sort: { last_seen: -1 } }
-    ];
-    const results = await sessions.aggregate(pipeline).toArray();
-    if (results.length === 0) {
+  await withDb(config, async (db, sessions) => {
+    const counts = await sessions.aggregate([
+      { $match: { deleted_at: null } },
+      { $group: { _id: "$machine", count: { $sum: 1 }, last_active: { $max: "$updated_at" } } }
+    ]).toArray();
+    const registered = await db.collection("hosts").find({}).toArray();
+    const rows = new Map;
+    for (const c of counts)
+      rows.set(c._id.toLowerCase(), { host: c._id, count: c.count, lastActive: c.last_active, reg: null });
+    for (const r of registered) {
+      const row = rows.get(r.host.toLowerCase()) ?? { host: r.host, count: 0, lastActive: null, reg: null };
+      row.reg = r;
+      rows.set(r.host.toLowerCase(), row);
+    }
+    if (rows.size === 0) {
       console.log("No hosts found. Run 'cs sync' first.");
       return;
     }
-    const headers = ["HOST", "SESSIONS", "LAST SEEN"];
-    const colWidths = [25, 10, 12];
-    const rows = results.map((r) => [
-      machineColor(config.listFQDN ? r["_id"] : r["_id"].split(".")[0]),
-      String(r["count"]),
-      relativeTime(new Date(r["last_seen"]))
+    const sorted = [...rows.values()].sort((a, b) => {
+      const ta = Math.max(a.reg?.last_seen.getTime() ?? 0, a.lastActive?.getTime() ?? 0);
+      const tb = Math.max(b.reg?.last_seen.getTime() ?? 0, b.lastActive?.getTime() ?? 0);
+      return tb - ta;
+    });
+    const headers = ["HOST", "SESSIONS", "ACTIVE", "SYNCED", "CS"];
+    const colWidths = [25, 10, 12, 12, 10];
+    const table = sorted.map((r) => [
+      machineColor(config.listFQDN ? r.host : r.host.split(".")[0]),
+      String(r.count),
+      r.lastActive ? relativeTime(r.lastActive) : dim("-"),
+      r.reg ? relativeTime(r.reg.last_seen) : dim("never"),
+      r.reg ? `v${r.reg.version}` : dim("old")
     ]);
-    console.log(formatTable(headers, rows, colWidths));
+    console.log(formatTable(headers, table, colWidths));
   });
 }
 async function cmdAdopt(config, prefix, attach) {
@@ -31183,9 +31226,16 @@ async function updateHost(config, host, target) {
 async function cmdUpdateAll(config) {
   await cmdUpdate();
   const target = await fetchRemoteVersion().catch(() => null);
-  const hosts = await withDb(config, async (_db, sessions) => sessions.aggregate([{ $group: { _id: "$machine" } }]).toArray());
-  const localHost = getHostname(config);
-  const remoteHosts = hosts.map((h) => h["_id"]).filter((h) => h.toLowerCase() !== localHost.toLowerCase()).sort();
+  const { targets: remoteHosts, stale } = await withDb(config, async (db, sessions) => {
+    const registered = await db.collection("hosts").find({}).toArray();
+    const sessionHosts = (await sessions.distinct("machine")).filter((m) => typeof m === "string");
+    const cutoff = new Date(Date.now() - FLEET_MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
+    return fleetHosts({ registered, sessionHosts, local: getHostname(config) }, cutoff);
+  });
+  if (stale.length > 0) {
+    console.log(dim(`
+Skipping ${stale.length} host(s) not synced in ${FLEET_MAX_AGE_DAYS} days: ${stale.join(", ")}`));
+  }
   if (remoteHosts.length === 0) {
     console.log(`
 No remote hosts to update.`);
