@@ -166,8 +166,8 @@ Restore a soft\-deleted session.
 .TP
 .BI "cs prune" " [\-\-days N] [\-\-all]"
 Bulk soft\-delete sessions that have no \fB/rename\fP name and no tag. Default
-threshold is 30 days; \fB\-\-all\fP prunes regardless of age. \fBNamed and
-tagged sessions are never pruned.\fP
+threshold is 30 days; \fB\-\-all\fP prunes regardless of age. \fBNamed,
+tagged, and running sessions are never pruned.\fP
 .TP
 .BI "cs deleted" " [\-\-local] [\-\-host <name>]"
 List soft\-deleted sessions with their deletion timestamps. Defaults to all
@@ -176,7 +176,9 @@ hosts. Restore any of them with \fBcs rm \-\-undo <id>\fP.
 .BI "cs gc" " [\-\-yes]"
 Collapse duplicate sessions. Sessions are grouped by project and host; the
 most recently updated one in each group is kept and the older ones become GC
-candidates. Without \fB\-\-yes\fP, shows what would be removed.
+candidates. \fBAn older session that is still running in tmux is never
+removed\fP \(em it is listed as kept instead. Without \fB\-\-yes\fP, shows
+what would be removed.
 .RS
 .PP
 This is a soft\-delete \(em no local files are touched, and anything removed
@@ -197,8 +199,9 @@ With \fB\-\-all\fP, bulk deletes matching sessions (requires typed \fBYES\fP
 confirmation). Bulk mode \fBskips live \fB/rename\fPd or tagged sessions\fP
 unless they have already been soft\-deleted \(em a wildcard cannot silently
 destroy a session you named or tagged. To purge one anyway, target it
-explicitly or soft\-delete it first. With \fB\-\-deleted\fP, targets only
-soft\-deleted sessions.
+explicitly or soft\-delete it first. Bulk mode also \fBnever touches a session
+that is running in tmux\fP, soft\-deleted or not. With \fB\-\-deleted\fP,
+targets only soft\-deleted sessions.
 .RE
 .TP
 .BI "cs purge \-\-orphans" " [\-\-yes]"

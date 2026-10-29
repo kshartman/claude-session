@@ -703,6 +703,59 @@ export function escapeRegex(str: string): string {
 const NOT_NAMED = { $or: [{ agent_name: null }, { agent_name: { $exists: false } }] };
 const NOT_TAGGED = { $or: [{ tag: null }, { tag: { $exists: false } }] };
 
+// A running session is one sync last saw live in tmux. Bulk removal (gc,
+// prune, purge --all) never touches one, deleted or not; an explicit
+// single-target command still can. $nin also matches null/missing state.
+export const LIVE_STATES: readonly SessionState[] = ["WORKING", "WAITING", "IDLE"];
+const NOT_RUNNING = { state: { $nin: LIVE_STATES } };
+
+export function isRunning(s: Pick<SessionRecord, "state">): boolean {
+  return s.state != null && LIVE_STATES.includes(s.state);
+}
+
+/**
+ * `cs gc`: per project+host, keep the most recently updated session; the
+ * older ones are removed unless running, in which case they are kept too.
+ */
+export function gcPlan<T extends Pick<SessionRecord, "project_name" | "machine" | "updated_at" | "state">>(
+  records: readonly T[]
+): { remove: T[]; keptRunning: T[] } {
+  const groups = new Map<string, T[]>();
+  for (const r of records) {
+    const key = `${r.project_name}\0${r.machine}`;
+    const group = groups.get(key) ?? [];
+    group.push(r);
+    groups.set(key, group);
+  }
+  const remove: T[] = [];
+  const keptRunning: T[] = [];
+  for (const group of groups.values()) {
+    group.sort((a, b) => b.updated_at.getTime() - a.updated_at.getTime());
+    for (const older of group.slice(1)) (isRunning(older) ? keptRunning : remove).push(older);
+  }
+  const byNewest = (a: T, b: T): number => b.updated_at.getTime() - a.updated_at.getTime();
+  return { remove: remove.sort(byNewest), keptRunning: keptRunning.sort(byNewest) };
+}
+
+/**
+ * Sync: several session files can map to one tmux session (same /rename
+ * name, or a resume that wrote a new session file). Only the most recently
+ * written is the one running there — the `--resume <id>` on the command line
+ * names the session it started from, not necessarily the one it writes.
+ * Returns the session_ids that own their tmux session.
+ */
+export function tmuxOwners(
+  entries: readonly { session_id: string; tmux: string | null; updated_at: Date }[]
+): Set<string> {
+  const newest = new Map<string, { session_id: string; updated_at: Date }>();
+  for (const e of entries) {
+    if (e.tmux === null) continue;
+    const cur = newest.get(e.tmux);
+    if (!cur || e.updated_at.getTime() > cur.updated_at.getTime()) newest.set(e.tmux, e);
+  }
+  return new Set([...newest.values()].map((e) => e.session_id));
+}
+
 // The same keep-signal rule as a JS predicate, for code paths that filter
 // already-fetched records in memory rather than via a Mongo query (e.g.
 // purge --orphans). A live (not soft-deleted) named or tagged session is kept.
@@ -713,7 +766,7 @@ export function isKeepSignalProtected(
 }
 
 // Selects sessions `cs prune` may soft-delete on `machine`: not soft-deleted,
-// not named, not tagged, and (unless `all`) older than `days`.
+// not named, not tagged, not running, and (unless `all`) older than `days`.
 export function pruneFilter(
   machine: string,
   opts: { days: number; all: boolean }
@@ -721,7 +774,7 @@ export function pruneFilter(
   const filter: Record<string, unknown> = {
     machine,
     deleted_at: null,
-    $and: [NOT_TAGGED, NOT_NAMED],
+    $and: [NOT_TAGGED, NOT_NAMED, NOT_RUNNING],
   };
   if (!opts.all) {
     filter["updated_at"] = {
@@ -732,8 +785,9 @@ export function pruneFilter(
 }
 
 // Selects sessions `cs purge --all` may hard-delete: matching `pattern` (or all
-// when "*"), optionally on `host` / only `deletedOnly`, and — the guard — never
-// a live named/tagged session unless it has already been soft-deleted.
+// when "*"), optionally on `host` / only `deletedOnly`, and — the guards — never
+// a running session, and never a live named/tagged one unless it has already
+// been soft-deleted.
 export function purgeBulkFilter(
   pattern: string,
   opts: { host?: string | null; deletedOnly: boolean }
@@ -751,6 +805,7 @@ export function purgeBulkFilter(
   conditions.push({
     $or: [{ deleted_at: { $ne: null } }, { $and: [NOT_NAMED, NOT_TAGGED] }],
   });
+  conditions.push(NOT_RUNNING);
 
   const query: Record<string, unknown> = {};
   if (opts.host) {

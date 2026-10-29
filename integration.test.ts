@@ -54,6 +54,13 @@ const FIXTURES = [
   mkRec({ session_id: "f5-plain-deleted", deleted_at: DEL }),
 ];
 
+// Running sessions: bulk removal must never reach these, deleted or not.
+const RUNNING = [
+  mkRec({ session_id: "r1-plain-running", state: "IDLE", tmux_session: "proj-r1" }),
+  mkRec({ session_id: "r2-deleted-running", state: "WORKING", tmux_session: "proj-r2", deleted_at: DEL }),
+  mkRec({ session_id: "r3-plain-dead", state: "DEAD" }),
+];
+
 const ids = (rows: SessionRecord[]) => rows.map((r) => r.session_id).sort();
 
 const run = TEST_URI ? describe : describe.skip;
@@ -99,6 +106,16 @@ run("integration: prune/purge filters against real MongoDB", () => {
   test("purge --deleted --all only reaches the trash", async () => {
     const found = await col.find(purgeBulkFilter("*", { host: MACHINE, deletedOnly: true })).toArray();
     expect(ids(found)).toEqual(["f4-named-deleted", "f5-plain-deleted"]);
+  });
+
+  test("running sessions are never selected by prune or purge --all", async () => {
+    await col.insertMany(RUNNING.map((f) => ({ ...f })));
+    const pruned = await col.find(pruneFilter(MACHINE, { days: 30, all: true })).toArray();
+    expect(ids(pruned)).toEqual(["f3-plain-live", "r3-plain-dead"]);
+    const purged = await col.find(purgeBulkFilter("*", { host: MACHINE, deletedOnly: false })).toArray();
+    expect(ids(purged)).toEqual(["f3-plain-live", "f4-named-deleted", "f5-plain-deleted", "r3-plain-dead"]);
+    const trash = await col.find(purgeBulkFilter("*", { host: MACHINE, deletedOnly: true })).toArray();
+    expect(ids(trash)).not.toContain("r2-deleted-running");
   });
 
   test("end-to-end: real prune updateMany flips exactly the right doc", async () => {

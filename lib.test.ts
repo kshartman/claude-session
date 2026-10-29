@@ -12,6 +12,9 @@ import {
   escapeRegex,
   detectState,
   matchPrefix,
+  gcPlan,
+  tmuxOwners,
+  isRunning,
   parseArgs,
   parsePositiveInt,
   sameProjectCandidates,
@@ -363,13 +366,14 @@ describe("formatTable", () => {
 // --- mongo filters ---
 
 describe("pruneFilter", () => {
-  test("scopes to machine, live only, and excludes named + tagged", () => {
+  test("scopes to machine, live only, and excludes named + tagged + running", () => {
     const f = pruneFilter("host1", { days: 30, all: true });
     expect(f["machine"]).toBe("host1");
     expect(f["deleted_at"]).toBeNull();
     expect(f["$and"]).toEqual([
       { $or: [{ tag: null }, { tag: { $exists: false } }] },
       { $or: [{ agent_name: null }, { agent_name: { $exists: false } }] },
+      { state: { $nin: ["WORKING", "WAITING", "IDLE"] } },
     ]);
   });
 
@@ -402,10 +406,11 @@ describe("isKeepSignalProtected", () => {
 });
 
 describe("purgeBulkFilter", () => {
-  test("wildcard purge only carries the keep-guard clause", () => {
+  test("wildcard purge carries only the keep-guard and running-guard clauses", () => {
     const f = purgeBulkFilter("*", { deletedOnly: false });
     const and = f["$and"] as Record<string, unknown>[];
-    expect(and).toHaveLength(1);
+    expect(and).toHaveLength(2);
+    expect(and[1]).toEqual({ state: { $nin: ["WORKING", "WAITING", "IDLE"] } });
     // guard: already-trashed OR (not named AND not tagged)
     expect(and[0]).toEqual({
       $or: [
@@ -421,9 +426,9 @@ describe("purgeBulkFilter", () => {
     expect(f["machine"]).toBeUndefined();
   });
 
-  test("non-wildcard adds a pattern clause alongside the guard", () => {
+  test("non-wildcard adds a pattern clause alongside the guards", () => {
     const and = purgeBulkFilter("foo", { deletedOnly: false })["$and"] as Record<string, unknown>[];
-    expect(and).toHaveLength(2);
+    expect(and).toHaveLength(3);
   });
 
   test("host and --deleted scope the query", () => {
@@ -747,5 +752,63 @@ describe("colorEnabled", () => {
     expect(colorEnabled({ FORCE_COLOR: "1" }, false, false)).toBe(true);
     expect(colorEnabled({ FORCE_COLOR: "0" }, false, false)).toBe(false);
     expect(colorEnabled({ FORCE_COLOR: "" }, false, false)).toBe(false);
+  });
+});
+
+// --- running-session guard ---
+
+describe("isRunning", () => {
+  test("WORKING/WAITING/IDLE are running; DEAD and null are not", () => {
+    expect(isRunning({ state: "WORKING" })).toBe(true);
+    expect(isRunning({ state: "WAITING" })).toBe(true);
+    expect(isRunning({ state: "IDLE" })).toBe(true);
+    expect(isRunning({ state: "DEAD" })).toBe(false);
+    expect(isRunning({ state: null })).toBe(false);
+  });
+});
+
+describe("gcPlan", () => {
+  type R = { id: string; project_name: string; machine: string; updated_at: Date; state: "IDLE" | "DEAD" | null };
+  const r = (id: string, project: string, machine: string, day: number, state: R["state"] = null): R => ({
+    id, project_name: project, machine, updated_at: new Date(Date.UTC(2026, 9, day)), state,
+  });
+  const ids = (xs: R[]) => xs.map((x) => x.id);
+
+  test("keeps the newest per project+host, removes older stopped ones", () => {
+    const plan = gcPlan([r("a1", "app", "h1", 1), r("a3", "app", "h1", 3), r("a2", "app", "h1", 2)]);
+    expect(ids(plan.remove)).toEqual(["a2", "a1"]);
+    expect(plan.keptRunning).toEqual([]);
+  });
+
+  test("never removes an older session that is running", () => {
+    const plan = gcPlan([r("new", "app", "h1", 3), r("live", "app", "h1", 2, "IDLE"), r("old", "app", "h1", 1, "DEAD")]);
+    expect(ids(plan.remove)).toEqual(["old"]);
+    expect(ids(plan.keptRunning)).toEqual(["live"]);
+  });
+
+  test("groups by host as well as project", () => {
+    const plan = gcPlan([r("x", "app", "h1", 1), r("y", "app", "h2", 2)]);
+    expect(plan.remove).toEqual([]);
+  });
+
+  test("single sessions are untouched", () => {
+    expect(gcPlan([r("solo", "app", "h1", 1, "IDLE")])).toEqual({ remove: [], keptRunning: [] });
+  });
+});
+
+describe("tmuxOwners", () => {
+  const e = (id: string, tmux: string | null, day: number) => ({
+    session_id: id, tmux, updated_at: new Date(Date.UTC(2026, 9, day)),
+  });
+
+  test("of several files mapped to one tmux session, the newest owns it", () => {
+    // resume wrote a new file: the --resume id (old) is not the running one
+    const owners = tmuxOwners([e("old", "myapp", 27), e("new", "myapp", 29)]);
+    expect([...owners]).toEqual(["new"]);
+  });
+
+  test("each tmux session gets its own owner; unmatched records get none", () => {
+    const owners = tmuxOwners([e("a", "one", 1), e("b", "two", 2), e("c", null, 3)]);
+    expect([...owners].sort()).toEqual(["a", "b"]);
   });
 });

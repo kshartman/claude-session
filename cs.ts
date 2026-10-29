@@ -36,6 +36,9 @@ import {
   isKeepSignalProtected,
   detectState,
   matchPrefix,
+  gcPlan,
+  LIVE_STATES,
+  tmuxOwners,
   parseArgs,
   parsePositiveInt,
   type ParsedArgs,
@@ -255,8 +258,9 @@ async function cmdSync(
   const machine = getHostname(config);
   const tmuxSessions = await tmuxListSessions();
 
-  // Collect all session records
+  // Collect all session records, with the tmux session each one maps to
   const records: Omit<SessionRecord, "_id">[] = [];
+  const tmuxOf = new Map<string, string>();
   const projectDirs = readdirSync(claudeDir);
 
   for (const dirName of projectDirs) {
@@ -298,13 +302,11 @@ async function cmdSync(
 
         const tmuxSessionName = tmuxName(sessionId, parsed.sessionName, projectName);
         // Also check legacy cs-<shortid> naming
-        const tmuxInfo = tmuxSessions.get(tmuxSessionName)
-          ?? tmuxSessions.get(`cs-${sessionId.slice(0, 8)}`);
-        let state: SessionState | null = null;
-
-        if (tmuxInfo) {
-          state = await detectLiveState(tmuxSessionName);
-        }
+        const legacyName = `cs-${sessionId.slice(0, 8)}`;
+        const matched = tmuxSessions.has(tmuxSessionName)
+          ? tmuxSessionName
+          : tmuxSessions.has(legacyName) ? legacyName : null;
+        if (matched) tmuxOf.set(sessionId, matched);
 
         const summary = await readSummary(dirPath, sessionId);
 
@@ -320,8 +322,8 @@ async function cmdSync(
           title: parsed.sessionName ?? parsed.title,
           agent_name: parsed.sessionName,
           tag: null,
-          state,
-          tmux_session: tmuxInfo ? tmuxSessionName : null,
+          state: null, // set below, for the session that owns its tmux
+          tmux_session: null,
           summary,
           synced_at: new Date(),
           deleted_at: null,
@@ -338,6 +340,19 @@ async function cmdSync(
     return;
   }
 
+  // Only the session actually running in a tmux session gets its live state
+  const owners = tmuxOwners(records.map((r) => ({
+    session_id: r.session_id,
+    tmux: tmuxOf.get(r.session_id) ?? null,
+    updated_at: r.updated_at,
+  })));
+  for (const rec of records) {
+    const tmux = tmuxOf.get(rec.session_id);
+    if (!tmux || !owners.has(rec.session_id)) continue;
+    rec.state = await detectLiveState(tmux);
+    rec.tmux_session = tmux;
+  }
+
   await withDb(config, async (_db, sessions) => {
     await ensureIndexes(sessions);
 
@@ -347,6 +362,27 @@ async function cmdSync(
       .project({ session_id: 1 })
       .toArray();
     const deletedIds = new Set(deleted.map((d) => d.session_id as string));
+
+    // Soft-deleted records keep only their live state current, so the bulk
+    // removal guard (never touch a running session) sees the truth for them too.
+    const stateOps = records
+      .filter((rec) => deletedIds.has(rec.session_id))
+      .map((rec) => ({
+        updateOne: {
+          filter: { session_id: rec.session_id, machine: rec.machine },
+          update: { $set: { state: rec.state, tmux_session: rec.tmux_session } },
+        },
+      }));
+    if (stateOps.length > 0) await sessions.bulkWrite(stateOps);
+
+    // This sync saw every tmux session on this host, so any other record here
+    // still marked running is stale (e.g. its session file is gone) — clear it,
+    // or the guard would protect it forever.
+    const runningNow = records.filter((r) => r.tmux_session !== null).map((r) => r.session_id);
+    await sessions.updateMany(
+      { machine, session_id: { $nin: runningNow }, state: { $in: [...LIVE_STATES] } },
+      { $set: { state: null, tmux_session: null } }
+    );
 
     const ops = records
       .filter((rec) => !deletedIds.has(rec.session_id))
@@ -1832,62 +1868,48 @@ async function cmdPurgeOrphans(
   });
 }
 
+const GC_HEADERS = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
+const GC_WIDTHS = [12, 14, 8, 8, 10, 30];
+
+function gcRow(config: CsConfig, s: SessionRecord): string[] {
+  const proj = s.project_name.length > 12 ? s.project_name.slice(0, 11) + ">" : s.project_name;
+  const title = s.title ?? "(no title)";
+  const truncTitle = title.length > 30 ? title.slice(0, 29) + ">" : title;
+  return [
+    staleText(proj, s.updated_at),
+    dim(s.session_id.slice(0, 14)),
+    machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]!),
+    stateColor(s.state),
+    relativeTime(s.updated_at),
+    staleText(truncTitle, s.updated_at),
+  ];
+}
+
 async function cmdGc(
   config: CsConfig,
   confirm: boolean
 ): Promise<void> {
   await withDb(config, async (_db, sessions) => {
-    // Fetch all non-deleted sessions
-    const all = await sessions
-      .find({ deleted_at: null })
-      .sort({ updated_at: -1 })
-      .toArray();
+    const all = await sessions.find({ deleted_at: null }).toArray();
+    const { remove: candidates, keptRunning } = gcPlan(all);
 
-    // Group by (project_name, machine) — keep newest, rest are GC candidates
-    const groups = new Map<string, SessionRecord[]>();
-    for (const s of all) {
-      const key = `${s.project_name}\0${s.machine}`;
-      let group = groups.get(key);
-      if (!group) {
-        group = [];
-        groups.set(key, group);
-      }
-      group.push(s);
-    }
-
-    const candidates: SessionRecord[] = [];
-    for (const group of groups.values()) {
-      if (group.length <= 1) continue;
-      // Already sorted by updated_at desc — skip the first (newest)
-      candidates.push(...group.slice(1));
+    if (keptRunning.length > 0) {
+      console.log(`${bold("Kept")} ${keptRunning.length} older session(s) that are running:\n`);
+      console.log(formatTable(GC_HEADERS, keptRunning.map((s) => gcRow(config, s)), GC_WIDTHS));
+      console.log("");
     }
 
     if (candidates.length === 0) {
-      console.log("No GC candidates — each project+host has at most one session.");
+      console.log(keptRunning.length > 0
+        ? "No other GC candidates."
+        : "No GC candidates — each project+host has at most one session.");
       return;
     }
 
-    // Sort candidates by updated_at desc for display
-    candidates.sort((a, b) => b.updated_at.getTime() - a.updated_at.getTime());
-
-    const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
-    const colWidths = [12, 14, 8, 8, 10, 30];
-    const rows = candidates.map((s) => {
-      const proj = s.project_name.length > 12 ? s.project_name.slice(0, 11) + ">" : s.project_name;
-      const title = s.title ?? "(no title)";
-      const truncTitle = title.length > 30 ? title.slice(0, 29) + ">" : title;
-      return [
-        staleText(proj, s.updated_at),
-        dim(s.session_id.slice(0, 14)),
-        machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]!),
-        stateColor(s.state),
-        relativeTime(s.updated_at),
-        staleText(truncTitle, s.updated_at),
-      ];
-    });
+    const rows = candidates.map((s) => gcRow(config, s));
 
     console.log(`${bold("GC candidates")}: ${candidates.length} older session(s) in projects with multiple sessions\n`);
-    console.log(formatTable(headers, rows, colWidths));
+    console.log(formatTable(GC_HEADERS, rows, GC_WIDTHS));
 
     if (!confirm) {
       console.log(`\nRun ${bold("cs gc --yes")} to soft-delete these sessions.`);

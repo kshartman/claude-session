@@ -190,7 +190,7 @@ Restore a soft-deleted session.
 
 ### `cs prune [--days N] [--all]`
 
-Bulk soft-delete sessions that have no `/rename` name and no tag. Default threshold is 30 days; `--all` prunes regardless of age. **Named and tagged sessions are never pruned.**
+Bulk soft-delete sessions that have no `/rename` name and no tag. Default threshold is 30 days; `--all` prunes regardless of age. **Named, tagged, and running sessions are never pruned.**
 
 ```bash
 cs prune                       # remove unnamed/untagged older than 30 days
@@ -204,7 +204,7 @@ List soft-deleted sessions with their deletion timestamps. Defaults to all hosts
 
 ### `cs gc [--yes]`
 
-Collapse duplicate sessions. Sessions are grouped by project and host; the most recently updated one in each group is kept and the older ones become GC candidates. Without `--yes`, shows what would be removed.
+Collapse duplicate sessions. Sessions are grouped by project and host; the most recently updated one in each group is kept and the older ones become GC candidates. **An older session that is still running in tmux is never removed** — it is listed as kept instead. Without `--yes`, shows what would be removed.
 
 This is a soft-delete — no local files are touched, and anything removed can be restored with `cs rm --undo <id>`.
 
@@ -219,7 +219,7 @@ Hard delete sessions — removes MongoDB records, JSONL files, and session direc
 
 Several sessions can be named at once (`cs purge --yes s1 s2 s3`). Each is resolved independently; one that does not resolve is reported and skipped rather than aborting the batch.
 
-With `--all`, bulk deletes matching sessions (requires typed `YES` confirmation). Bulk mode **skips live `/rename`d or tagged sessions** unless they have already been soft-deleted — a wildcard cannot silently destroy a session you named or tagged. To purge one anyway, target it explicitly or soft-delete it first. With `--deleted`, targets only soft-deleted sessions.
+With `--all`, bulk deletes matching sessions (requires typed `YES` confirmation). Bulk mode **skips live `/rename`d or tagged sessions** unless they have already been soft-deleted — a wildcard cannot silently destroy a session you named or tagged. To purge one anyway, target it explicitly or soft-delete it first. Bulk mode also **never touches a session that is running in tmux**, soft-deleted or not. With `--deleted`, targets only soft-deleted sessions.
 
 ```bash
 cs purge 952d                      # preview single session purge
