@@ -28791,7 +28791,7 @@ var COMMANDS = [
     ],
     details: [
       {
-        p: "Hard delete sessions \u2014 removes MongoDB records, JSONL files, and session directories. **Irreversible.** Without `--yes`, shows what would be deleted."
+        p: "Hard delete sessions \u2014 removes MongoDB records, JSONL files, and session directories, and stops the session's tmux session only if it is the session running there (never another session that merely shares its name). **Irreversible.** Without `--yes`, shows what would be deleted."
       },
       {
         p: "Sessions on other hosts are purged there over ssh(1), after the one confirmation given here: each host is sent the exact session IDs you saw, never the pattern, so it cannot widen the set. A host that cannot be reached is reported and its sessions are left alone; cs then exits 1."
@@ -28940,7 +28940,7 @@ var ARG_SPECS = {
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.13.0";
+var VERSION = "1.13.1";
 var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29340,6 +29340,9 @@ function groupByMachine(records) {
     groups.set(r.machine, g);
   }
   return groups;
+}
+function tmuxToKill(s) {
+  return s.tmux_session && isRunning(s) ? s.tmux_session : null;
 }
 function tmuxName(sessionId, title, projectName) {
   if (title) {
@@ -30521,10 +30524,9 @@ function purgeOneSession(session, claudeDir) {
     rmSync(sessionDir, { recursive: true });
     deleted.push(sessionDir + "/");
   }
-  const tmuxSession = tmuxName(session.session_id, session.title, session.project_name);
-  Bun.spawnSync(["tmux", "kill-session", "-t", tmuxSession], { stdout: "pipe", stderr: "pipe" });
-  if (session.tmux_session) {
-    Bun.spawnSync(["tmux", "kill-session", "-t", session.tmux_session], { stdout: "pipe", stderr: "pipe" });
+  const owned = tmuxToKill(session);
+  if (owned && Bun.which("tmux")) {
+    Bun.spawnSync(["tmux", "kill-session", "-t", owned], { stdout: "pipe", stderr: "pipe" });
   }
   return { jsonlPath, sessionDir, deleted };
 }
@@ -30620,7 +30622,7 @@ Type YES to permanently delete ${matches.length} sessions: `)) {
     if (localMatches.length > 0)
       console.log(`
 Purged ${red(String(purged))} session(s) on this host.`);
-    if (remoteMatches.length > 0 && !await purgeOnRemoteHosts(remoteMatches))
+    if (remoteMatches.length > 0 && !await purgeOnRemoteHosts(config, remoteMatches))
       process.exit(1);
   });
 }
@@ -30642,7 +30644,7 @@ Aborted (no input available).`);
   }
   return true;
 }
-async function purgeOnRemoteHosts(records) {
+async function purgeOnRemoteHosts(config, records) {
   if (process.env["CS_NO_REMOTE"]) {
     console.error(`Cannot purge ${records.length} session(s) on other hosts from here. Run cs purge there.`);
     return false;
@@ -30651,7 +30653,7 @@ async function purgeOnRemoteHosts(records) {
   for (const [host, group] of groupByMachine(records)) {
     console.log(`
 ${machineColor(host.split(".")[0])}: purging ${group.length} session(s) over SSH...`);
-    const run = await sshTry(sshHostCandidates(host), remotePurgeCommand(REMOTE_CS_PATH, group.map((g) => g.session_id)));
+    const run = await sshTry(sshHostCandidates(host), remotePurgeCommand(remoteCsPath(config), group.map((g) => g.session_id)));
     for (const line of run.stdout.trim().split(`
 `).filter(Boolean))
       console.log(`  ${line}`);
@@ -31122,7 +31124,9 @@ async function cmdUpdate(force = false) {
   console.log(`Updated to cs v${remoteVersion}`);
   ensureCron();
 }
-var REMOTE_CS_PATH = "PATH=$HOME/.local/bin:$HOME/.bun/bin:$PATH";
+function remoteCsPath(config) {
+  return `PATH="${config.remotePath}:$PATH"`;
+}
 async function sshTry(tryHosts, command) {
   let last = {
     host: tryHosts[0] ?? "",
@@ -31152,15 +31156,15 @@ async function sshTry(tryHosts, command) {
   }
   return last;
 }
-async function updateHost(host, target) {
+async function updateHost(config, host, target) {
   const tryHosts = sshHostCandidates(host);
-  const run = await sshTry(tryHosts, `${REMOTE_CS_PATH} cs update`);
+  const run = await sshTry(tryHosts, `${remoteCsPath(config)} cs update`);
   if (run.exitCode === 0) {
     return { outcome: "updated", line: run.stdout.trim().split(`
 `).pop() ?? "done" };
   }
   const reason = firstLine(run.stderr) || `exit ${run.exitCode}`;
-  const probe = await sshTry(tryHosts, `${REMOTE_CS_PATH} cs version`);
+  const probe = await sshTry(tryHosts, `${remoteCsPath(config)} cs version`);
   if (probe.exitCode !== 0) {
     return { outcome: "unreachable", line: dim(`unreachable \u2014 ${reason}`) };
   }
@@ -31192,7 +31196,7 @@ Updating ${remoteHosts.length} remote host(s)...`);
   const tally = { updated: 0, unreachable: 0, failed: 0 };
   for (const host of remoteHosts) {
     process.stdout.write(`  ${host.split(".")[0]}: `);
-    const { outcome, line } = await updateHost(host, target);
+    const { outcome, line } = await updateHost(config, host, target);
     tally[outcome] += 1;
     console.log(line);
   }
