@@ -280,7 +280,7 @@ Print the current version and exit.
 
 Claude Code stores sessions as JSONL files in `~/.claude/projects/`. Each file is a conversation — one JSON object per line.
 
-`cs sync` reads these files, extracts metadata (title from your first message, message count, timestamps), and upserts to a central MongoDB database. It also checks for active tmux sessions and detects their state.
+`cs sync` reads these files, extracts metadata (title from your first message, message count, timestamps), and upserts to a central MongoDB database. It also checks for active tmux sessions and detects their state, and registers the host itself so `cs update --all` and `cs hosts` know it even when it has no sessions.
 
 The MongoDB database is the shared layer — every machine syncs to it, and any machine can query it. Session data stays local; only metadata goes to the database.
 
@@ -317,7 +317,7 @@ Config lives at `~/.config/cs/config.json`:
 | `showDetachHint` | `false` | Show detach key combo in the tmux status bar when attached |
 | `listFQDN` | `true` | Show full hostnames; set `false` to show short names (e.g., `dev` instead of `dev.example.com`) |
 | `noCron` | `false` | Disable automatic cron sync setup on install and update |
-| `remotePath` | `$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin` | Extra PATH entries for remote SSH commands (tmux, claude) |
+| `remotePath` | `$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin` | PATH prepended for every remote SSH command — attach, `update --all`, remote purge — so non-login shells find cs, bun, tmux, and claude |
 | `agentKeyTimeout` | `28800` (8h) | How long SSH keys stay loaded in the agent (seconds) |
 | `agentKeyFile` | (unset) | Which SSH private key to load into the agent. Unset means plain `ssh-add`, i.e. ssh's default key set. Supports `~`. |
 | `hostname` | `os.hostname()` | Override the stored hostname. Use when `os.hostname()` changes (e.g., short name → FQDN) to keep records consistent. Sync auto-migrates old records. |
@@ -331,4 +331,4 @@ Config lives at `~/.config/cs/config.json`:
 3. Cron sync is set up automatically by the installer
 4. Set up SSH key auth between machines (for remote attach)
 
-Now `cs list` shows sessions from all hosts, and `cs attach` connects to any of them.
+Now `cs list` shows sessions from all hosts, `cs attach` connects to any of them, and `cs update --all` / `cs purge` reach every host over SSH.

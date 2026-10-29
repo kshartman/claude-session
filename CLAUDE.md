@@ -67,7 +67,7 @@ interface SessionRecord {
   agent_name: string | null;   // /rename value if set (null = not renamed); protects from bulk prune/purge
   tag: string | null;          // user-applied label (only set via cs tag)
   state: SessionState | null;  // detected from tmux: WORKING | WAITING | IDLE | DEAD
-  tmux_session: string | null; // tmux session name (cs-<short-id>)
+  tmux_session: string | null; // tmux session this session is running in; set only for its owner (see State Detection)
   summary: string | null;      // first 200 chars of session-memory summary.md if present
   synced_at: Date;             // when this record was last upserted
   deleted_at: Date | null;     // soft-delete timestamp (rm/prune/gc); null = live
@@ -136,7 +136,8 @@ that bails when `SSH_AUTH_SOCK` already points at `*/cs-agent.sock`, or the pin 
 overwritten (claude runs under `bash -lc`, a login shell).
 
 Session identifiers can be: session ID prefix, `/rename` name (exact match),
-or title prefix (case-insensitive).
+project name (exact match), or title prefix (case-insensitive), tried in that
+order (`resolveSession`).
 
 ### State Detection
 
@@ -152,6 +153,20 @@ matching patterns:
 
 State detection is heuristic and must degrade gracefully — unknown patterns
 produce `null` (not an error).
+
+**Ownership.** Several session files can map to one tmux session name (same
+`/rename` name, or a `claude --resume` that wrote a new session file — the
+`--resume <id>` on the command line names the session it started *from*, not
+the one it writes). Sync gives `state` and `tmux_session` only to the most
+recently written of them (`tmuxOwners`); the rest get `null`. Sync also keeps
+state current on soft-deleted records and clears "running" on any record of
+this host it did not find in tmux.
+
+**The running guard.** Bulk removal — `gc`, `prune`, `purge --all` — never
+touches a session whose state is WORKING/WAITING/IDLE (`isRunning`,
+`NOT_RUNNING`). `purge` stops a tmux session only via `tmuxToKill` (the
+record's own `tmux_session`, while running) — never by name, which duplicates
+share. Explicit single-target `rm`/`purge` still work on a running session.
 
 ## Commands
 
@@ -169,7 +184,8 @@ To change it: edit `commands.ts` (and the implementation in `cs.ts`), then run
 - Machine names: distinct ANSI colors per machine
 - Session states: green=WORKING, yellow=WAITING, dim=IDLE, red=DEAD
 - Stale sessions (>24h): dimmed
-- Respect `NO_COLOR` environment variable
+- Color only when stdout and stderr are both terminals (`colorEnabled`); `NO_COLOR`
+  disables it, `FORCE_COLOR` (not `0`) enables it for pipes; `NO_COLOR` wins
 
 ## Undocumented Claude Code Dependencies
 
@@ -187,6 +203,7 @@ degrades gracefully rather than crashing.
 | `timestamp` ISO string per line | started_at | Falls back to file ctime |
 | `agent-*` session IDs for subagents | cleanup | Agents mixed with real sessions |
 | `<id>/session-memory/summary.md` | summary extraction | No summaries |
+| `claude --resume <id>` writes a *new* session file | tmux ownership (newest file wins) | Wrong session marked running; guard protects/kills the wrong one |
 
 If Claude Code publishes a stable API for session metadata, cs should migrate
 to it. Until then, monitor after Claude Code updates.
@@ -197,38 +214,47 @@ Source layout:
 
 - **`lib.ts`** — Pure functions and typed interfaces (testable, no side effects):
   ```
-  // --- types ---
-  // --- config ---
-  // --- colors ---
+  // --- types ---               (SessionRecord, HostRecord, CsConfig)
+  // --- config ---              (also sshHostCandidates, fleetHosts)
+  // --- colors ---              (colorEnabled)
   // --- time formatting ---
+  // --- size formatting ---
   // --- path decoding ---
   // --- jsonl parsing ---
   // --- summary reading ---
   // --- state detection ---
-  // --- prefix matching ---
+  // --- prefix matching ---     (also sameProjectCandidates, parsePickChoice)
   // --- table formatting ---
-  // --- shell quoting ---
+  // --- shell quoting ---       (also remotePurgeCommand, groupByMachine, tmuxToKill)
   // --- tmux session name ---
+  // --- argument checks ---     (ArgSpec, parseArgs, parsePositiveInt)
+  // --- mongo filters ---       (prune/purge filters; running guard: isRunning,
+  //                               gcPlan, tmuxOwners)
   ```
 
 - **`cs.ts`** — CLI entry point with shebang (imports from lib.ts):
   ```
-  // --- db (connect/disconnect) ---
-  // --- tmux (shell commands) ---
-  // --- sync ---
+  // --- sort ---
+  // --- db ---
+  // --- tmux helpers ---
+  // --- ensure indexes ---
+  // --- sync ---               (registerHost, owner-only live state)
   // --- commands ---
   // --- usage ---
-  // --- main / dispatch ---
+  // --- main ---               (parseCommandLine → dispatch; argv read once)
   ```
 
 - **`commands.ts`** — The command reference as data: synopsis, summary, prose,
   options, examples. Read at runtime by `printUsage()` and at build time by
-  `scripts/gen-docs.ts`. Static table, no logic.
+  `scripts/gen-docs.ts`. Also `ARG_SPECS`: each command's flags, value flags,
+  and positional count, which `main()` parses argv against (`parseArgs`) — an
+  unknown option exits 1. A test checks every `ARG_SPECS` flag is documented.
+  Static tables, no logic.
 
 - **`lib.test.ts`** — Unit tests for lib.ts (run via `bun test`)
 
 - **`integration.test.ts`** — DB-backed tests for the prune/purge keep/destroy
-  matrix (server-evaluated filters). Reads `CS_TEST_MONGO_URI` or a gitignored
+  matrix, including the running guard (server-evaluated filters). Reads `CS_TEST_MONGO_URI` or a gitignored
   `.test-mongo-uri`; skips cleanly when neither is set.
 
 - **`scripts/`** — `sync-version.ts` (VERSION → lib.ts + package.json + the
@@ -258,8 +284,11 @@ try-catch with graceful degradation.
 - `~/.claude` not found: warn and exit 0 (Claude Code not installed on this host yet)
 - tmux not installed: print install instructions and exit 1
 - fzf not installed (for resume): print install instructions and exit 1
-- Ambiguous session ID prefix: list matches and exit 1
+- Ambiguous session ID prefix: list matches and exit 1 (except `cs attach`, which
+  asks when all matches are one project; `--latest` takes the newest)
 - Unknown command: print usage and exit 1
+- Unknown option, value flag without a value, extra positional: message and exit 1
+- Remote purge: an unreachable host is reported, its sessions left alone; exit 1
 
 ## Install
 
