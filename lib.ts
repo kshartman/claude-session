@@ -604,6 +604,27 @@ export function shellQuote(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
+/**
+ * The command a host runs to purge its share of a confirmed purge: the exact
+ * session IDs the user saw and confirmed, via single-target purge — never a
+ * pattern, so the remote can't re-evaluate a filter and widen the set.
+ * CS_NO_REMOTE=1 stops the remote from fanning out over SSH in turn.
+ */
+export function remotePurgeCommand(pathPrefix: string, sessionIds: readonly string[]): string {
+  return `${pathPrefix} CS_NO_REMOTE=1 cs purge --yes ${sessionIds.map(shellQuote).join(" ")}`;
+}
+
+/** Records grouped by `machine`, hosts in sorted order. */
+export function groupByMachine<T extends { machine: string }>(records: readonly T[]): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const r of [...records].sort((a, b) => a.machine.localeCompare(b.machine))) {
+    const g = groups.get(r.machine) ?? [];
+    g.push(r);
+    groups.set(r.machine, g);
+  }
+  return groups;
+}
+
 // --- tmux session name ---
 
 export function tmuxName(

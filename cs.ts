@@ -36,6 +36,8 @@ import {
   isKeepSignalProtected,
   detectState,
   matchPrefix,
+  remotePurgeCommand,
+  groupByMachine,
   gcPlan,
   LIVE_STATES,
   tmuxOwners,
@@ -1658,65 +1660,92 @@ async function cmdPurge(
     }
 
     if (matches.length === 0) {
-      console.log(`No sessions matching '${label}' on this host.`);
+      console.log(`No sessions matching '${label}'${host ? ` on ${host}` : ""}.`);
       return;
     }
 
-    // Check all are local
-    const nonLocal = matches.filter((m) => m.machine.toLowerCase() !== machine.toLowerCase());
-    if (nonLocal.length > 0 && confirm) {
-      console.error(`Cannot purge ${nonLocal.length} session(s) on other hosts. Run cs purge there.`);
-      const localOnly = matches.filter((m) => m.machine.toLowerCase() === machine.toLowerCase());
-      if (localOnly.length === 0) process.exit(1);
-      matches = localOnly;
-    }
+    const isLocal = (m: SessionRecord): boolean => m.machine.toLowerCase() === machine.toLowerCase();
+    const localMatches = matches.filter(isLocal);
+    const remoteMatches = matches.filter((m) => !isLocal(m));
 
     // Show what will be purged
     console.log(`${all ? "Bulk purge" : "Purge"} ${matches.length} session(s) matching '${label}':\n`);
     for (const s of matches) {
-      const pathHash = encodePathHash(s.project_path);
-      const jsonlPath = join(claudeDir, pathHash, `${s.session_id}.jsonl`);
-      const local = s.machine.toLowerCase() === machine.toLowerCase();
-      console.log(`  ${s.project_name}  ${s.session_id.slice(0, 14)}  ${s.machine}  ${s.title ?? "(no title)"}  ${local && existsSync(jsonlPath) ? "files: yes" : dim("files: no")}`);
+      const jsonlPath = join(claudeDir, encodePathHash(s.project_path), `${s.session_id}.jsonl`);
+      const files = !isLocal(s) ? dim("files: on that host") : existsSync(jsonlPath) ? "files: yes" : dim("files: no");
+      console.log(`  ${s.project_name}  ${s.session_id.slice(0, 14)}  ${s.machine}  ${s.title ?? "(no title)"}  ${files}`);
     }
 
     if (!confirm) {
-      if (nonLocal.length > 0) {
-        console.log(yellow(`\n  ${nonLocal.length} session(s) on other hosts — run cs purge there`));
+      if (remoteMatches.length > 0) {
+        console.log(yellow(`\n  ${remoteMatches.length} session(s) on other hosts will be purged there over SSH`));
       }
       console.log(`\nRun with --yes to confirm.`);
       return;
     }
 
-    // Bulk: demand typed confirmation
-    if (all && matches.length > 1) {
-      process.stdout.write(`\nType YES to permanently delete ${matches.length} sessions: `);
-      let answer: string;
-      try {
-        const buf = Buffer.alloc(10);
-        const n = readSync(0, buf, 0, 10, null);
-        answer = buf.subarray(0, n).toString().trim();
-      } catch {
-        console.log("\nAborted (no input available).");
-        return;
-      }
-      if (answer !== "YES") {
-        console.log("Aborted.");
-        return;
-      }
+    // Bulk: demand typed confirmation — one answer covers every host
+    if (all && matches.length > 1 && !confirmTyped(`\nType YES to permanently delete ${matches.length} sessions: `)) {
+      return;
     }
 
-    // Purge
     let purged = 0;
-    for (const s of matches.filter((m) => m.machine.toLowerCase() === machine.toLowerCase())) {
+    for (const s of localMatches) {
       const result = purgeOneSession(s, claudeDir);
       await sessions.deleteOne({ session_id: s.session_id, machine: s.machine });
       for (const f of result.deleted) console.log(`  Deleted ${f}`);
       purged++;
     }
+    if (localMatches.length > 0) console.log(`\nPurged ${red(String(purged))} session(s) on this host.`);
 
-    console.log(`\nPurged ${red(String(purged))} session(s).`);
+    if (remoteMatches.length > 0 && !(await purgeOnRemoteHosts(remoteMatches))) process.exit(1);
   });
+}
+
+/** Read a typed confirmation from stdin; true only for exactly "YES". */
+function confirmTyped(prompt: string): boolean {
+  process.stdout.write(prompt);
+  let answer: string;
+  try {
+    const buf = Buffer.alloc(10);
+    const n = readSync(0, buf, 0, 10, null);
+    answer = buf.subarray(0, n).toString().trim();
+  } catch {
+    console.log("\nAborted (no input available).");
+    return false;
+  }
+  if (answer !== "YES") {
+    console.log("Aborted.");
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Purge already-confirmed sessions on the hosts they live on, over SSH. Each
+ * host gets the exact session IDs (remotePurgeCommand). Returns false if any
+ * host could not be reached or reported an error; the rest still proceed.
+ */
+async function purgeOnRemoteHosts(records: SessionRecord[]): Promise<boolean> {
+  if (process.env["CS_NO_REMOTE"]) {
+    // We are already the remote end of a purge; never fan out again.
+    console.error(`Cannot purge ${records.length} session(s) on other hosts from here. Run cs purge there.`);
+    return false;
+  }
+  let allOk = true;
+  for (const [host, group] of groupByMachine(records)) {
+    console.log(`\n${machineColor(host.split(".")[0]!)}: purging ${group.length} session(s) over SSH...`);
+    const run = await sshTry(
+      sshHostCandidates(host),
+      remotePurgeCommand(REMOTE_CS_PATH, group.map((g) => g.session_id))
+    );
+    for (const line of run.stdout.trim().split("\n").filter(Boolean)) console.log(`  ${line}`);
+    if (run.exitCode !== 0) {
+      allOk = false;
+      console.error(`  ${red("failed")} ${dim(`(${firstLine(run.stderr) || `exit ${run.exitCode}`})`)} — its sessions were not purged`);
+    }
+  }
+  return allOk;
 }
 
 interface OrphanDir {

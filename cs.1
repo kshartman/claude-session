@@ -188,8 +188,13 @@ can be restored with \fBcs rm \-\-undo <id>\fP.
 .BI "cs purge" " <pattern>... [\-\-yes] [\-\-all] [\-\-host <name>] [\-\-deleted]"
 Hard delete sessions \(em removes MongoDB records, JSONL files, and session
 directories. \fBIrreversible.\fP Without \fB\-\-yes\fP, shows what would be
-deleted. Must be run on the host where the sessions live.
+deleted.
 .RS
+.PP
+Sessions on other hosts are purged there over \fBssh\fP(1), after the one
+confirmation given here: each host is sent the exact session IDs you saw,
+never the pattern, so it cannot widen the set. A host that cannot be reached
+is reported and its sessions are left alone; cs then exits 1.
 .PP
 Several sessions can be named at once (\fBcs purge \-\-yes s1 s2 s3\fP). Each
 is resolved independently; one that does not resolve is reported and skipped

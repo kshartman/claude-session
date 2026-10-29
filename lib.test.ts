@@ -12,6 +12,8 @@ import {
   escapeRegex,
   detectState,
   matchPrefix,
+  remotePurgeCommand,
+  groupByMachine,
   gcPlan,
   tmuxOwners,
   isRunning,
@@ -810,5 +812,38 @@ describe("tmuxOwners", () => {
   test("each tmux session gets its own owner; unmatched records get none", () => {
     const owners = tmuxOwners([e("a", "one", 1), e("b", "two", 2), e("c", null, 3)]);
     expect([...owners].sort()).toEqual(["a", "b"]);
+  });
+});
+
+// --- remote purge ---
+
+describe("remotePurgeCommand", () => {
+  test("sends the exact quoted IDs via single-target purge, with no-fanout guard", () => {
+    const cmd = remotePurgeCommand("PATH=/x:$PATH", ["aaaa-1111", "bbbb-2222"]);
+    expect(cmd).toBe("PATH=/x:$PATH CS_NO_REMOTE=1 cs purge --yes 'aaaa-1111' 'bbbb-2222'");
+  });
+
+  test("never bulk mode: no --all, no pattern, no --deleted", () => {
+    const cmd = remotePurgeCommand("P", ["id"]);
+    expect(cmd).not.toContain("--all");
+    expect(cmd).not.toContain("--deleted");
+    expect(cmd).not.toContain("*");
+  });
+
+  test("shell metacharacters in an ID stay inside quotes", () => {
+    const cmd = remotePurgeCommand("P", ["x'; rm -rf ~ #"]);
+    expect(cmd).toBe("P CS_NO_REMOTE=1 cs purge --yes 'x'\\''; rm -rf ~ #'");
+  });
+});
+
+describe("groupByMachine", () => {
+  test("groups records per host, hosts sorted, order kept within a host", () => {
+    const g = groupByMachine([
+      { machine: "host2", id: 1 },
+      { machine: "host1", id: 2 },
+      { machine: "host2", id: 3 },
+    ]);
+    expect([...g.keys()]).toEqual(["host1", "host2"]);
+    expect(g.get("host2")!.map((r) => r.id)).toEqual([1, 3]);
   });
 });

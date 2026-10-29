@@ -394,7 +394,10 @@ export const COMMANDS: CommandDoc[] = [
     ],
     details: [
       {
-        p: "Hard delete sessions — removes MongoDB records, JSONL files, and session directories. **Irreversible.** Without `--yes`, shows what would be deleted. Must be run on the host where the sessions live.",
+        p: "Hard delete sessions — removes MongoDB records, JSONL files, and session directories. **Irreversible.** Without `--yes`, shows what would be deleted.",
+      },
+      {
+        p: "Sessions on other hosts are purged there over ssh(1), after the one confirmation given here: each host is sent the exact session IDs you saw, never the pattern, so it cannot widen the set. A host that cannot be reached is reported and its sessions are left alone; cs then exits 1.",
       },
       {
         p: "Several sessions can be named at once (`cs purge --yes s1 s2 s3`). Each is resolved independently; one that does not resolve is reported and skipped rather than aborting the batch.",
@@ -408,8 +411,8 @@ export const COMMANDS: CommandDoc[] = [
       "cs purge 952d --yes                # purge one session",
       "cs purge --yes 952d a4b9 262a      # purge several at once",
       'cs purge agent --all --yes         # bulk purge all matching "agent"',
-      "cs purge --all --deleted --yes     # purge all soft-deleted sessions",
-      "cs purge --all --host dev --yes    # purge all sessions on dev",
+      "cs purge --all --deleted --yes     # empty the trash on every host",
+      "cs purge --all --host dev --yes    # purge all sessions on dev (over SSH)",
     ],
   },
   {
