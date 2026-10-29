@@ -36,6 +36,7 @@ import {
   isKeepSignalProtected,
   detectState,
   matchPrefix,
+  unexpectedArgs,
   sameProjectCandidates,
   parsePickChoice,
   shortId,
@@ -2478,6 +2479,12 @@ async function main(): Promise<void> {
   }
 
   if (command === "update") {
+    const unexpected = unexpectedArgs(args.slice(1), ["--all", "--force"]);
+    if (unexpected.length > 0) {
+      console.error(`Unknown argument(s) for cs update: ${unexpected.join(" ")}`);
+      console.error("Usage: cs update [--force] [--all]");
+      process.exit(1);
+    }
     if (args.includes("--all")) {
       let config: CsConfig;
       try {

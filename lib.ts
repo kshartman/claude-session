@@ -600,6 +600,16 @@ export function tmuxName(
   return shortId(sessionId);
 }
 
+// --- argument checks ---
+
+/**
+ * Arguments not in `allowed`, in order. For commands that take only flags,
+ * so a typo (`--al`) fails loudly instead of silently running the default.
+ */
+export function unexpectedArgs(args: readonly string[], allowed: readonly string[]): string[] {
+  return args.filter((a) => !allowed.includes(a));
+}
+
 // --- mongo filters ---
 
 export function escapeRegex(str: string): string {

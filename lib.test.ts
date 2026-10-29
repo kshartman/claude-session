@@ -12,6 +12,7 @@ import {
   escapeRegex,
   detectState,
   matchPrefix,
+  unexpectedArgs,
   sameProjectCandidates,
   parsePickChoice,
   shortId,
@@ -588,5 +589,25 @@ describe("colors", () => {
     expect(stateColor("IDLE")).toContain("IDLE");
     expect(stateColor("DEAD")).toContain("DEAD");
     expect(stateColor(null)).toContain("NONE");
+  });
+});
+
+// --- argument checks ---
+
+describe("unexpectedArgs", () => {
+  const allowed = ["--all", "--force"];
+
+  test("all allowed → empty", () => {
+    expect(unexpectedArgs(["--all", "--force"], allowed)).toEqual([]);
+    expect(unexpectedArgs([], allowed)).toEqual([]);
+  });
+
+  test("typo and positional are reported in order", () => {
+    expect(unexpectedArgs(["--al", "--force", "host1"], allowed)).toEqual(["--al", "host1"]);
+  });
+
+  test("near-miss spellings are not accepted", () => {
+    expect(unexpectedArgs(["--All"], allowed)).toEqual(["--All"]);
+    expect(unexpectedArgs(["-all"], allowed)).toEqual(["-all"]);
   });
 });
