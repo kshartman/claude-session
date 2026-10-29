@@ -28509,9 +28509,11 @@ var COMMANDS = [
       },
       {
         p: "With `--orphans`, also lists untracked tmux sessions that are running Claude but have no database record (e.g. sessions started manually outside cs)."
+      },
+      {
+        p: "`--sort [field]` orders the table as in `cs list`. The other `cs list` options do not apply to the dashboard."
       }
-    ],
-    optionsFrom: "cs list"
+    ]
   },
   {
     id: "sync",
@@ -28935,7 +28937,7 @@ var ARG_SPECS = {
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.12.0";
+var VERSION = "1.12.1";
 var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29325,7 +29327,9 @@ function tmuxName(sessionId, title, projectName) {
   }
   return shortId(sessionId);
 }
-function checkArgs(args, spec) {
+function parseArgs(args, spec) {
+  const present = new Set;
+  const values = new Map;
   const positionals = [];
   for (let i = 0;i < args.length; i++) {
     const a = args[i];
@@ -29333,22 +29337,32 @@ function checkArgs(args, spec) {
     const nextIsValue = next !== undefined && !next.startsWith("-");
     if (!a.startsWith("-")) {
       positionals.push(a);
-    } else if (spec.values?.includes(a)) {
-      if (!nextIsValue)
-        return `${a} needs a value`;
+      continue;
+    }
+    const takesValue = spec.values?.includes(a) ?? false;
+    const optionalValue = spec.optionalValues?.includes(a) ?? false;
+    if (!takesValue && !optionalValue && !spec.flags?.includes(a)) {
+      return { ok: false, error: `unknown option ${a}` };
+    }
+    if (takesValue && !nextIsValue)
+      return { ok: false, error: `${a} needs a value` };
+    present.add(a);
+    if ((takesValue || optionalValue) && nextIsValue) {
+      values.set(a, next);
       i++;
-    } else if (spec.optionalValues?.includes(a)) {
-      if (nextIsValue)
-        i++;
-    } else if (!spec.flags?.includes(a)) {
-      return `unknown option ${a}`;
     }
   }
   const max = spec.positionals;
   if (max !== "rest" && positionals.length > max) {
-    return `unexpected argument ${positionals[max]}`;
+    return { ok: false, error: `unexpected argument ${positionals[max]}` };
   }
-  return null;
+  return { ok: true, args: { present, values, positionals } };
+}
+function parsePositiveInt(s) {
+  if (!/^\d+$/.test(s))
+    return null;
+  const n = parseInt(s, 10);
+  return n > 0 ? n : null;
 }
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -29397,19 +29411,6 @@ function purgeBulkFilter(pattern, opts) {
 
 // cs.ts
 var SORT_FIELDS = ["title", "updated", "host", "project"];
-function parseSort(args) {
-  const idx = args.indexOf("--sort");
-  if (idx < 0)
-    return null;
-  const val = args[idx + 1];
-  if (!val || val.startsWith("--"))
-    return "title";
-  if (!SORT_FIELDS.includes(val)) {
-    console.error(`Invalid sort field: ${val}. Valid: ${SORT_FIELDS.join(", ")}`);
-    process.exit(1);
-  }
-  return val;
-}
 function mongoSortSpec(field) {
   switch (field) {
     case "title":
@@ -31138,7 +31139,7 @@ ${bold("Usage:")}
 ${commandRows.join(`
 `)}
 
-${bold("List/dashboard options:")}
+${bold("List options:")}
 ${optionRows.join(`
 `)}
 
@@ -31151,97 +31152,9 @@ ${bold("Environment:")}
   CS_MIRROR_URL                   Second origin whose checksum must match (update/install)
   NO_COLOR                        Disable color output`);
 }
-function rejectBadArgs(command, args) {
-  const aliased = command === "--version" ? "version" : command;
-  const dashboard = aliased === undefined || aliased.startsWith("-");
-  const key = dashboard ? "" : aliased;
-  const spec = ARG_SPECS[key];
-  if (!spec)
-    return;
-  const problem = checkArgs(dashboard ? args : args.slice(1), spec);
-  if (problem) {
-    console.error(`cs${key ? ` ${key}` : ""}: ${problem}`);
-    console.error(`Run ${bold("cs --help")} for usage.`);
-    process.exit(1);
-  }
-}
-async function main() {
-  const args = process.argv.slice(2);
-  const command = args[0];
-  if (args.includes("--help") || args.includes("-h")) {
-    printUsage();
-    return;
-  }
-  rejectBadArgs(command, args);
-  if (command === "status") {
-    await cmdStatus();
-    return;
-  }
-  if (command === "agent") {
-    const sub = args[1];
-    if (sub === "stop") {
-      let config;
-      try {
-        config = loadConfig();
-      } catch (err) {
-        if (err instanceof ConfigError) {
-          console.error(err.message);
-          process.exit(1);
-        }
-        throw err;
-      }
-      const all = args.includes("--all");
-      const hostIdx = args.indexOf("--host");
-      const host = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
-      await cmdAgentStop(config, host, all);
-    } else {
-      console.error("Usage: cs agent stop [--host <name>] [--all]");
-      process.exit(1);
-    }
-    return;
-  }
-  if (command === "add-key") {
-    let config;
-    try {
-      config = loadConfig();
-    } catch (err) {
-      if (err instanceof ConfigError) {
-        console.error(err.message);
-        process.exit(1);
-      }
-      throw err;
-    }
-    const all = args.includes("--all");
-    const hostIdx = args.indexOf("--host");
-    const host = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
-    await cmdAddKey(config, host, all);
-    return;
-  }
-  if (command === "update") {
-    if (args.includes("--all")) {
-      let config;
-      try {
-        config = loadConfig();
-      } catch (err) {
-        if (err instanceof ConfigError) {
-          console.error(err.message);
-          process.exit(1);
-        }
-        throw err;
-      }
-      await cmdUpdateAll(config);
-    } else {
-      await cmdUpdate(args.includes("--force"));
-    }
-    return;
-  }
-  if (command === "version" || command === "--version") {
-    console.log(`cs v${VERSION}`);
-    return;
-  }
-  let config;
+function loadConfigOrExit() {
   try {
-    config = loadConfig();
+    return loadConfig();
   } catch (err) {
     if (err instanceof ConfigError) {
       console.error(err.message);
@@ -31249,72 +31162,129 @@ async function main() {
     }
     throw err;
   }
-  if (!command || command === "--sort" || command === "--orphans") {
-    const sort = parseSort(args);
-    const showOrphans = args.includes("--orphans");
-    await cmdDashboard(config, sort, showOrphans);
+}
+function commandKey(argv) {
+  const first = argv[0];
+  if (first === "--version")
+    return { key: "version", rest: argv.slice(1) };
+  if (first === undefined || first.startsWith("-"))
+    return { key: "", rest: argv };
+  return { key: first, rest: argv.slice(1) };
+}
+function parseCommandLine(argv) {
+  const { key, rest } = commandKey(argv);
+  const spec = ARG_SPECS[key];
+  if (!spec) {
+    console.error(`Unknown command: ${key}
+`);
+    printUsage();
+    process.exit(1);
+  }
+  const parsed = parseArgs(rest, spec);
+  if (!parsed.ok) {
+    console.error(`cs${key ? ` ${key}` : ""}: ${parsed.error}`);
+    console.error(`Run ${bold("cs --help")} for usage.`);
+    process.exit(1);
+  }
+  return { key, p: parsed.args };
+}
+function hostArg(p) {
+  return p.values.get("--host") ?? null;
+}
+function intArg(p, flag, fallback) {
+  const raw = p.values.get(flag);
+  if (raw === undefined)
+    return fallback;
+  const n = parsePositiveInt(raw);
+  if (n === null) {
+    console.error(`${flag} needs a positive integer, got '${raw}'`);
+    process.exit(1);
+  }
+  return n;
+}
+function requirePositional(p, i, usage) {
+  const v = p.positionals[i];
+  if (v === undefined) {
+    console.error(`Usage: ${usage}`);
+    process.exit(1);
+  }
+  return v;
+}
+function sortArg(p) {
+  if (!p.present.has("--sort"))
+    return null;
+  const val = p.values.get("--sort");
+  if (val === undefined)
+    return "title";
+  if (!SORT_FIELDS.includes(val)) {
+    console.error(`Invalid sort field: ${val}. Valid: ${SORT_FIELDS.join(", ")}`);
+    process.exit(1);
+  }
+  return val;
+}
+async function main() {
+  const argv = process.argv.slice(2);
+  if (argv.includes("--help") || argv.includes("-h")) {
+    printUsage();
     return;
   }
-  switch (command) {
-    case "sync": {
-      const quiet = args.includes("--quiet");
-      await cmdSync(config, quiet);
+  const { key, p } = parseCommandLine(argv);
+  switch (key) {
+    case "status":
+      await cmdStatus();
+      return;
+    case "version":
+      console.log(`cs v${VERSION}`);
+      return;
+    case "update":
+      if (p.present.has("--all"))
+        await cmdUpdateAll(loadConfigOrExit());
+      else
+        await cmdUpdate(p.present.has("--force"));
+      return;
+  }
+  await dispatch(key, p, loadConfigOrExit());
+}
+async function dispatch(key, p, config) {
+  const has = (flag) => p.present.has(flag);
+  switch (key) {
+    case "":
+      await cmdDashboard(config, sortArg(p), has("--orphans"));
       break;
-    }
-    case "list": {
-      const local = args.includes("--local");
-      const hostIdx = args.indexOf("--host");
-      const host = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
-      const projectIdx = args.indexOf("--project");
-      const project = projectIdx >= 0 ? args[projectIdx + 1] ?? null : null;
-      const limitIdx = args.indexOf("--limit");
-      const limit = limitIdx >= 0 ? parseInt(args[limitIdx + 1] ?? "40", 10) : 40;
-      const sort = parseSort(args);
-      await cmdList(config, { local, host, project, limit, sort });
+    case "sync":
+      await cmdSync(config, has("--quiet"));
       break;
-    }
+    case "list":
+      await cmdList(config, {
+        local: has("--local"),
+        host: hostArg(p),
+        project: p.values.get("--project") ?? null,
+        limit: intArg(p, "--limit", 40),
+        sort: sortArg(p)
+      });
+      break;
     case "launch": {
-      const project = args[1];
-      if (!project) {
-        console.error("Usage: cs launch <project> [prompt]");
-        process.exit(1);
-      }
-      const prompt = args.slice(2).join(" ") || null;
+      const project = requirePositional(p, 0, "cs launch <project> [prompt]");
+      const prompt = p.positionals.slice(1).join(" ") || null;
       await cmdLaunch(config, project, prompt);
       break;
     }
-    case "adopt": {
-      const prefix = args[1];
-      if (!prefix) {
-        console.error("Usage: cs adopt <session_id_prefix> [--attach]");
-        process.exit(1);
-      }
-      const doAttach = args.includes("--attach");
-      await cmdAdopt(config, prefix, doAttach);
+    case "adopt":
+      await cmdAdopt(config, requirePositional(p, 0, "cs adopt <session_id_prefix> [--attach]"), has("--attach"));
       break;
-    }
     case "attach": {
-      const hostIdx = args.indexOf("--host");
-      const host = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
-      const latest = args.includes("--latest");
-      const prefix = args.filter((a) => a !== "--host" && a !== host && a !== "--latest")[1];
-      if (!prefix) {
-        console.error("Usage: cs attach <id-or-name> [--host <name>] [--latest]");
-        process.exit(1);
-      }
-      await cmdAttach(config, prefix, host, latest);
+      const prefix = requirePositional(p, 0, "cs attach <id-or-name> [--host <name>] [--latest]");
+      await cmdAttach(config, prefix, hostArg(p), has("--latest"));
       break;
     }
     case "kill": {
-      const all = args.includes("--all");
-      const hostIdx = args.indexOf("--host");
-      const host = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
-      const pattern = args.filter((a) => !a.startsWith("--") && a !== host)[1] ?? null;
+      const all = has("--all");
+      const pattern = p.positionals[0] ?? null;
       if (!all && !pattern) {
         console.error("Usage: cs kill <id-or-name> [--host <name>] | cs kill --all [--host <name>]");
         process.exit(1);
       }
-      await cmdKill(config, { pattern, host, all });
+      await cmdKill(config, { pattern, host: hostArg(p), all });
       break;
     }
     case "resume":
@@ -31324,85 +31294,60 @@ async function main() {
       await cmdLast(config);
       break;
     case "tag": {
-      const prefix = args[1];
-      const label = args[2];
-      if (!prefix || !label) {
-        console.error("Usage: cs tag <session_id_prefix> <label>");
-        process.exit(1);
-      }
-      await cmdTag(config, prefix, label);
+      const usage = "cs tag <session_id_prefix> <label>";
+      await cmdTag(config, requirePositional(p, 0, usage), requirePositional(p, 1, usage));
       break;
     }
-    case "info": {
-      const prefix = args[1];
-      if (!prefix) {
-        console.error("Usage: cs info <session_id_prefix>");
-        process.exit(1);
-      }
-      await cmdInfo(config, prefix);
+    case "info":
+      await cmdInfo(config, requirePositional(p, 0, "cs info <session_id_prefix>"));
       break;
-    }
     case "hosts":
       await cmdHosts(config);
       break;
-    case "rm": {
-      const undo = args.includes("--undo");
-      const prefix = args.filter((a) => a !== "--undo")[1];
-      if (!prefix) {
-        console.error("Usage: cs rm <id-or-name> [--undo]");
+    case "rm":
+      await cmdRm(config, requirePositional(p, 0, "cs rm <id-or-name> [--undo]"), has("--undo"));
+      break;
+    case "prune":
+      await cmdPrune(config, intArg(p, "--days", 30), has("--all"));
+      break;
+    case "deleted":
+      await cmdDeleted(config, { local: has("--local"), host: hostArg(p) });
+      break;
+    case "gc":
+      await cmdGc(config, has("--yes"));
+      break;
+    case "purge":
+      await dispatchPurge(config, p);
+      break;
+    case "add-key":
+      await cmdAddKey(config, hostArg(p), has("--all"));
+      break;
+    case "agent":
+      if (p.positionals[0] !== "stop") {
+        console.error("Usage: cs agent stop [--host <name>] [--all]");
         process.exit(1);
       }
-      await cmdRm(config, prefix, undo);
+      await cmdAgentStop(config, hostArg(p), has("--all"));
       break;
-    }
-    case "prune": {
-      const all = args.includes("--all");
-      const daysIdx = args.indexOf("--days");
-      const days = daysIdx >= 0 ? parseInt(args[daysIdx + 1] ?? "30", 10) : 30;
-      await cmdPrune(config, days, all);
-      break;
-    }
-    case "deleted": {
-      const local = args.includes("--local");
-      const hostIdx = args.indexOf("--host");
-      const host = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
-      await cmdDeleted(config, { local, host });
-      break;
-    }
-    case "gc": {
-      const yes = args.includes("--yes");
-      await cmdGc(config, yes);
-      break;
-    }
-    case "purge": {
-      const yes = args.includes("--yes");
-      if (args.includes("--orphans")) {
-        await cmdPurgeOrphans(config, yes);
-        break;
-      }
-      const all = args.includes("--all");
-      const deletedOnly = args.includes("--deleted");
-      const hostIdx = args.indexOf("--host");
-      const purgeHost = hostIdx >= 0 ? args[hostIdx + 1] ?? null : null;
-      const positionals = args.slice(1).filter((a) => !a.startsWith("--") && a !== purgeHost);
-      if (all && positionals.length > 1) {
-        console.error("cs purge --all takes a single pattern. To purge specific sessions, list them without --all: cs purge <s1> <s2> ...");
-        process.exit(1);
-      }
-      const patterns = positionals.length > 0 ? positionals : all ? ["*"] : [];
-      if (patterns.length === 0) {
-        console.error("Usage: cs purge <pattern> [<pattern>...] [--yes] [--all] [--host <name>] [--deleted]");
-        process.exit(1);
-      }
-      await cmdPurge(config, patterns, yes, all, purgeHost, deletedOnly);
-      break;
-    }
-    default:
-      console.error(`Unknown command: ${command}
-`);
-      printUsage();
-      process.exit(1);
   }
+}
+async function dispatchPurge(config, p) {
+  const yes = p.present.has("--yes");
+  if (p.present.has("--orphans")) {
+    await cmdPurgeOrphans(config, yes);
+    return;
+  }
+  const all = p.present.has("--all");
+  if (all && p.positionals.length > 1) {
+    console.error("cs purge --all takes a single pattern. To purge specific sessions, list them without --all: cs purge <s1> <s2> ...");
+    process.exit(1);
+  }
+  const patterns = p.positionals.length > 0 ? [...p.positionals] : all ? ["*"] : [];
+  if (patterns.length === 0) {
+    console.error("Usage: cs purge <pattern> [<pattern>...] [--yes] [--all] [--host <name>] [--deleted]");
+    process.exit(1);
+  }
+  await cmdPurge(config, patterns, yes, all, hostArg(p), p.present.has("--deleted"));
 }
 main().catch((err) => {
   console.error(err instanceof Error ? err.message : String(err));
