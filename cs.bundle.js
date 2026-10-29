@@ -28937,7 +28937,7 @@ var ARG_SPECS = {
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.12.1";
+var VERSION = "1.12.2";
 var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29044,7 +29044,15 @@ class ConfigError extends Error {
 function redactUri(uri) {
   return uri.replace(/:\/\/([^:]+):([^@]+)@/, "://$1:***@");
 }
-var NO_COLOR = !!process.env["NO_COLOR"];
+function colorEnabled(env, stdoutTTY, stderrTTY) {
+  if (env["NO_COLOR"])
+    return false;
+  const force = env["FORCE_COLOR"];
+  if (force && force !== "0")
+    return true;
+  return stdoutTTY && stderrTTY;
+}
+var NO_COLOR = !colorEnabled(process.env, process.stdout.isTTY === true, process.stderr.isTTY === true);
 var ANSI = {
   reset: "\x1B[0m",
   bold: "\x1B[1m",
@@ -31150,7 +31158,8 @@ ${bold("Install:")}
 ${bold("Environment:")}
   CS_REPO_URL                     Override repo URL for update/install
   CS_MIRROR_URL                   Second origin whose checksum must match (update/install)
-  NO_COLOR                        Disable color output`);
+  NO_COLOR                        Disable color output
+  FORCE_COLOR                     Color even when output is not a terminal`);
 }
 function loadConfigOrExit() {
   try {
