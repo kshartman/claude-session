@@ -69,8 +69,8 @@ export interface CommandDoc {
 }
 
 /**
- * Shared by the dashboard and `cs list` — the same parser handles both, so the
- * same list is what `cs --help` prints under "List/dashboard options".
+ * Options of `cs list` (the dashboard takes only `--sort` of these), printed by
+ * `cs --help` under "List options".
  */
 export const LIST_OPTIONS: DefItem[] = [
   {
@@ -113,8 +113,10 @@ export const COMMANDS: CommandDoc[] = [
       {
         p: "With `--orphans`, also lists untracked tmux sessions that are running Claude but have no database record (e.g. sessions started manually outside cs).",
       },
+      {
+        p: "`--sort [field]` orders the table as in `cs list`. The other `cs list` options do not apply to the dashboard.",
+      },
     ],
-    optionsFrom: "cs list",
   },
   {
     id: "sync",
@@ -503,7 +505,7 @@ export const COMMANDS: CommandDoc[] = [
 
 /**
  * What each command accepts after its command word, keyed by that word ("" is
- * the bare dashboard). `main()` in cs.ts rejects anything else via checkArgs.
+ * the bare dashboard). `main()` in cs.ts parses argv against it via parseArgs and rejects anything else.
  * lib.test.ts checks every flag here against the docs above.
  */
 export const ARG_SPECS: Record<string, ArgSpec> = {

@@ -61,7 +61,7 @@ Display the local dashboard: a single merged table of this machine's sessions wi
 
 With `--orphans`, also lists untracked tmux sessions that are running Claude but have no database record (e.g. sessions started manually outside cs).
 
-Takes the same filter and sort options as `cs list`.
+`--sort [field]` orders the table as in `cs list`. The other `cs list` options do not apply to the dashboard.
 
 ### `cs sync [--quiet]`
 

@@ -614,12 +614,26 @@ export interface ArgSpec {
   positionals: number | "rest";
 }
 
+/** A command line parsed against its ArgSpec. */
+export interface ParsedArgs {
+  /** Every flag given, including value flags. */
+  present: ReadonlySet<string>;
+  /** Values of value flags (and of optional-value flags given a value). */
+  values: ReadonlyMap<string, string>;
+  positionals: readonly string[];
+}
+
+export type ArgParse = { ok: true; args: ParsedArgs } | { ok: false; error: string };
+
 /**
- * Validate a command's arguments against its spec, so a typo (`--al`) fails
- * loudly instead of silently running the default. Returns an error message,
- * or null when the arguments are acceptable.
+ * Parse a command's arguments against its spec — the one place cs reads its
+ * command line, so a typo (`--al`) fails loudly instead of silently running
+ * the default. Rejects unknown options, value flags with no value, and extra
+ * positionals.
  */
-export function checkArgs(args: readonly string[], spec: ArgSpec): string | null {
+export function parseArgs(args: readonly string[], spec: ArgSpec): ArgParse {
+  const present = new Set<string>();
+  const values = new Map<string, string>();
   const positionals: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
@@ -627,20 +641,32 @@ export function checkArgs(args: readonly string[], spec: ArgSpec): string | null
     const nextIsValue = next !== undefined && !next.startsWith("-");
     if (!a.startsWith("-")) {
       positionals.push(a);
-    } else if (spec.values?.includes(a)) {
-      if (!nextIsValue) return `${a} needs a value`;
+      continue;
+    }
+    const takesValue = spec.values?.includes(a) ?? false;
+    const optionalValue = spec.optionalValues?.includes(a) ?? false;
+    if (!takesValue && !optionalValue && !spec.flags?.includes(a)) {
+      return { ok: false, error: `unknown option ${a}` };
+    }
+    if (takesValue && !nextIsValue) return { ok: false, error: `${a} needs a value` };
+    present.add(a);
+    if ((takesValue || optionalValue) && nextIsValue) {
+      values.set(a, next);
       i++;
-    } else if (spec.optionalValues?.includes(a)) {
-      if (nextIsValue) i++;
-    } else if (!spec.flags?.includes(a)) {
-      return `unknown option ${a}`;
     }
   }
   const max = spec.positionals;
   if (max !== "rest" && positionals.length > max) {
-    return `unexpected argument ${positionals[max]}`;
+    return { ok: false, error: `unexpected argument ${positionals[max]}` };
   }
-  return null;
+  return { ok: true, args: { present, values, positionals } };
+}
+
+/** A strictly positive base-10 integer, or null ("10x", "0", "-3" → null). */
+export function parsePositiveInt(s: string): number | null {
+  if (!/^\d+$/.test(s)) return null;
+  const n = parseInt(s, 10);
+  return n > 0 ? n : null;
 }
 
 // --- mongo filters ---

@@ -12,7 +12,8 @@ import {
   escapeRegex,
   detectState,
   matchPrefix,
-  checkArgs,
+  parseArgs,
+  parsePositiveInt,
   sameProjectCandidates,
   parsePickChoice,
   shortId,
@@ -595,7 +596,7 @@ describe("colors", () => {
 
 // --- argument checks ---
 
-describe("checkArgs", () => {
+describe("parseArgs", () => {
   const spec = {
     flags: ["--all", "--yes"],
     values: ["--host"],
@@ -603,40 +604,86 @@ describe("checkArgs", () => {
     positionals: 1,
   } as const;
 
-  test("accepts known flags, values, and positionals in any order", () => {
-    expect(checkArgs([], spec)).toBeNull();
-    expect(checkArgs(["--all", "--host", "dev", "abc", "--yes"], spec)).toBeNull();
-    expect(checkArgs(["abc", "--sort"], spec)).toBeNull();
-    expect(checkArgs(["--sort", "title"], spec)).toBeNull();
+  function ok(args: string[]) {
+    const r = parseArgs(args, spec);
+    if (!r.ok) throw new Error(`expected ok, got: ${r.error}`);
+    return r.args;
+  }
+  function err(args: string[]): string {
+    const r = parseArgs(args, spec);
+    if (r.ok) throw new Error("expected an error");
+    return r.error;
+  }
+
+  test("empty args", () => {
+    const r = ok([]);
+    expect(r.present.size).toBe(0);
+    expect(r.positionals).toEqual([]);
+  });
+
+  test("flags, values, and positionals in any order", () => {
+    const r = ok(["--all", "--host", "dev", "abc", "--yes"]);
+    expect([...r.present].sort()).toEqual(["--all", "--host", "--yes"]);
+    expect(r.values.get("--host")).toBe("dev");
+    expect(r.positionals).toEqual(["abc"]);
+  });
+
+  test("a value equal to a positional does not swallow it", () => {
+    // the old hand parser filtered positionals by `a !== host`
+    const r = ok(["--host", "dev", "dev"]);
+    expect(r.values.get("--host")).toBe("dev");
+    expect(r.positionals).toEqual(["dev"]);
+  });
+
+  test("optional value: given, absent, or followed by a flag", () => {
+    expect(ok(["--sort", "title"]).values.get("--sort")).toBe("title");
+    const bare = ok(["--sort"]);
+    expect(bare.present.has("--sort")).toBe(true);
+    expect(bare.values.has("--sort")).toBe(false);
+    const beforeFlag = ok(["--sort", "--all"]);
+    expect(beforeFlag.values.has("--sort")).toBe(false);
+    expect(beforeFlag.present.has("--all")).toBe(true);
+  });
+
+  test("optional value consumes a following word before positionals", () => {
+    const r = ok(["--sort", "title", "extra"]);
+    expect(r.values.get("--sort")).toBe("title");
+    expect(r.positionals).toEqual(["extra"]);
   });
 
   test("rejects unknown and near-miss flags", () => {
-    expect(checkArgs(["--al"], spec)).toBe("unknown option --al");
-    expect(checkArgs(["--All"], spec)).toBe("unknown option --All");
-    expect(checkArgs(["-all"], spec)).toBe("unknown option -all");
-    expect(checkArgs(["-"], spec)).toBe("unknown option -");
+    expect(err(["--al"])).toBe("unknown option --al");
+    expect(err(["--All"])).toBe("unknown option --All");
+    expect(err(["-all"])).toBe("unknown option -all");
+    expect(err(["-"])).toBe("unknown option -");
   });
 
-  test("value flag without a value is an error", () => {
-    expect(checkArgs(["--host"], spec)).toBe("--host needs a value");
-    expect(checkArgs(["--host", "--all"], spec)).toBe("--host needs a value");
-  });
-
-  test("a value is not counted as a positional", () => {
-    expect(checkArgs(["--host", "dev", "abc"], spec)).toBeNull();
-  });
-
-  test("optional value consumes a following positional", () => {
-    // `--sort title extra` → title is the sort value, extra is the 1 positional
-    expect(checkArgs(["--sort", "title", "extra"], spec)).toBeNull();
+  test("value flag without a value", () => {
+    expect(err(["--host"])).toBe("--host needs a value");
+    expect(err(["--host", "--all"])).toBe("--host needs a value");
   });
 
   test("too many positionals names the first extra one", () => {
-    expect(checkArgs(["abc", "def", "ghi"], spec)).toBe("unexpected argument def");
+    expect(err(["abc", "def", "ghi"])).toBe("unexpected argument def");
   });
 
   test('"rest" allows any number of positionals', () => {
-    expect(checkArgs(["a", "b", "c"], { positionals: "rest" })).toBeNull();
+    const r = parseArgs(["a", "b", "c"], { positionals: "rest" });
+    expect(r.ok && r.args.positionals).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("parsePositiveInt", () => {
+  test("accepts positive integers", () => {
+    expect(parsePositiveInt("1")).toBe(1);
+    expect(parsePositiveInt("40")).toBe(40);
+    expect(parsePositiveInt("007")).toBe(7);
+  });
+
+  test("rejects zero, negatives, decimals, junk", () => {
+    for (const s of ["0", "-3", "1.5", "10x", "abc", "", " 5"]) {
+      expect(parsePositiveInt(s)).toBeNull();
+    }
   });
 });
 
