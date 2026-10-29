@@ -323,6 +323,16 @@ to protect MongoDB credentials.
 If set, disables all ANSI color output. See
 .IR https://no-color.org/ .
 .TP
+.B FORCE_COLOR
+If set (and not
+.BR 0 ),
+enables color even when output is not a terminal, e.g.
+.BR "cs list | less \-R" .
+Without it, color is used only when standard output and standard error are
+both terminals.
+.B NO_COLOR
+takes precedence.
+.TP
 .B CS_REPO_URL
 Override the default repository URL for
 .B cs update

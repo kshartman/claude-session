@@ -25,6 +25,7 @@ import {
   formatTable,
   redactUri,
   stateColor,
+  colorEnabled,
   SCHEMA_VERSION,
   hostnameVariants,
   sshHostCandidates,
@@ -717,5 +718,34 @@ describe("ARG_SPECS", () => {
     const words = COMMANDS.map((c) => c.name.split(" ")[1])
       .filter((w): w is string => w !== undefined && !w.startsWith("-"));
     for (const w of new Set(words)) expect(ARG_SPECS[w]).toBeDefined();
+  });
+});
+
+// --- colors ---
+
+describe("colorEnabled", () => {
+  test("terminal on both streams → color", () => {
+    expect(colorEnabled({}, true, true)).toBe(true);
+  });
+
+  test("either stream captured or piped → no color", () => {
+    expect(colorEnabled({}, false, true)).toBe(false);
+    expect(colorEnabled({}, true, false)).toBe(false);
+    expect(colorEnabled({}, false, false)).toBe(false);
+  });
+
+  test("NO_COLOR disables, and beats FORCE_COLOR", () => {
+    expect(colorEnabled({ NO_COLOR: "1" }, true, true)).toBe(false);
+    expect(colorEnabled({ NO_COLOR: "1", FORCE_COLOR: "1" }, false, false)).toBe(false);
+  });
+
+  test("empty NO_COLOR is ignored", () => {
+    expect(colorEnabled({ NO_COLOR: "" }, true, true)).toBe(true);
+  });
+
+  test("FORCE_COLOR enables for pipes; 0 or empty does not", () => {
+    expect(colorEnabled({ FORCE_COLOR: "1" }, false, false)).toBe(true);
+    expect(colorEnabled({ FORCE_COLOR: "0" }, false, false)).toBe(false);
+    expect(colorEnabled({ FORCE_COLOR: "" }, false, false)).toBe(false);
   });
 });

@@ -180,7 +180,28 @@ export function redactUri(uri: string): string {
 
 // --- colors ---
 
-const NO_COLOR = !!process.env["NO_COLOR"];
+/**
+ * Color only when both output streams are terminals, so escape codes never
+ * land in a pipe, log, or capture. NO_COLOR (any non-empty value) always
+ * disables; FORCE_COLOR (non-empty, not "0") enables it for pipes such as
+ * `cs list | less -R`.
+ */
+export function colorEnabled(
+  env: Readonly<Record<string, string | undefined>>,
+  stdoutTTY: boolean,
+  stderrTTY: boolean
+): boolean {
+  if (env["NO_COLOR"]) return false;
+  const force = env["FORCE_COLOR"];
+  if (force && force !== "0") return true;
+  return stdoutTTY && stderrTTY;
+}
+
+const NO_COLOR = !colorEnabled(
+  process.env,
+  process.stdout.isTTY === true,
+  process.stderr.isTTY === true
+);
 
 const ANSI = {
   reset: "\x1b[0m",

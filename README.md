@@ -296,7 +296,7 @@ Use `cs agent stop` to kill the agent on any machine when you're done.
 
 ### Color coding
 
-Output is color-coded by session state and machine. Stale sessions (>24h) are dimmed. Respects the `NO_COLOR` environment variable.
+Output is color-coded by session state and machine. Stale sessions (>24h) are dimmed. Color is used only when stdout and stderr are both terminals; `NO_COLOR` disables it, and `FORCE_COLOR` enables it for pipes (`cs list | less -R`).
 
 ## Configuration
 

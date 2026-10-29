@@ -2412,7 +2412,8 @@ ${bold("Install:")}
 ${bold("Environment:")}
   CS_REPO_URL                     Override repo URL for update/install
   CS_MIRROR_URL                   Second origin whose checksum must match (update/install)
-  NO_COLOR                        Disable color output`);
+  NO_COLOR                        Disable color output
+  FORCE_COLOR                     Color even when output is not a terminal`);
 }
 
 // --- main ---
