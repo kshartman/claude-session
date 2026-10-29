@@ -28736,7 +28736,7 @@ var COMMANDS = [
     summary: "Bulk soft-delete unnamed/untagged sessions",
     details: [
       {
-        p: "Bulk soft-delete sessions that have no `/rename` name and no tag. Default threshold is 30 days; `--all` prunes regardless of age. **Named and tagged sessions are never pruned.**"
+        p: "Bulk soft-delete sessions that have no `/rename` name and no tag. Default threshold is 30 days; `--all` prunes regardless of age. **Named, tagged, and running sessions are never pruned.**"
       }
     ],
     examples: [
@@ -28765,7 +28765,7 @@ var COMMANDS = [
     variants: [{ name: "cs gc --yes", summary: "Soft-delete the duplicates" }],
     details: [
       {
-        p: "Collapse duplicate sessions. Sessions are grouped by project and host; the most recently updated one in each group is kept and the older ones become GC candidates. Without `--yes`, shows what would be removed."
+        p: "Collapse duplicate sessions. Sessions are grouped by project and host; the most recently updated one in each group is kept and the older ones become GC candidates. **An older session that is still running in tmux is never removed** \u2014 it is listed as kept instead. Without `--yes`, shows what would be removed."
       },
       {
         p: "This is a soft-delete \u2014 no local files are touched, and anything removed can be restored with `cs rm --undo <id>`."
@@ -28797,7 +28797,7 @@ var COMMANDS = [
         p: "Several sessions can be named at once (`cs purge --yes s1 s2 s3`). Each is resolved independently; one that does not resolve is reported and skipped rather than aborting the batch."
       },
       {
-        p: "With `--all`, bulk deletes matching sessions (requires typed `YES` confirmation). Bulk mode **skips live `/rename`d or tagged sessions** unless they have already been soft-deleted \u2014 a wildcard cannot silently destroy a session you named or tagged. To purge one anyway, target it explicitly or soft-delete it first. With `--deleted`, targets only soft-deleted sessions."
+        p: "With `--all`, bulk deletes matching sessions (requires typed `YES` confirmation). Bulk mode **skips live `/rename`d or tagged sessions** unless they have already been soft-deleted \u2014 a wildcard cannot silently destroy a session you named or tagged. To purge one anyway, target it explicitly or soft-delete it first. Bulk mode also **never touches a session that is running in tmux**, soft-deleted or not. With `--deleted`, targets only soft-deleted sessions."
       }
     ],
     examples: [
@@ -28937,7 +28937,7 @@ var ARG_SPECS = {
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.12.2";
+var VERSION = "1.12.3";
 var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29377,6 +29377,40 @@ function escapeRegex(str) {
 }
 var NOT_NAMED = { $or: [{ agent_name: null }, { agent_name: { $exists: false } }] };
 var NOT_TAGGED = { $or: [{ tag: null }, { tag: { $exists: false } }] };
+var LIVE_STATES = ["WORKING", "WAITING", "IDLE"];
+var NOT_RUNNING = { state: { $nin: LIVE_STATES } };
+function isRunning(s) {
+  return s.state != null && LIVE_STATES.includes(s.state);
+}
+function gcPlan(records) {
+  const groups = new Map;
+  for (const r of records) {
+    const key = `${r.project_name}\x00${r.machine}`;
+    const group = groups.get(key) ?? [];
+    group.push(r);
+    groups.set(key, group);
+  }
+  const remove = [];
+  const keptRunning = [];
+  for (const group of groups.values()) {
+    group.sort((a, b) => b.updated_at.getTime() - a.updated_at.getTime());
+    for (const older of group.slice(1))
+      (isRunning(older) ? keptRunning : remove).push(older);
+  }
+  const byNewest = (a, b) => b.updated_at.getTime() - a.updated_at.getTime();
+  return { remove: remove.sort(byNewest), keptRunning: keptRunning.sort(byNewest) };
+}
+function tmuxOwners(entries) {
+  const newest = new Map;
+  for (const e of entries) {
+    if (e.tmux === null)
+      continue;
+    const cur = newest.get(e.tmux);
+    if (!cur || e.updated_at.getTime() > cur.updated_at.getTime())
+      newest.set(e.tmux, e);
+  }
+  return new Set([...newest.values()].map((e) => e.session_id));
+}
 function isKeepSignalProtected(s) {
   return s.deleted_at == null && (s.agent_name != null || s.tag != null);
 }
@@ -29384,7 +29418,7 @@ function pruneFilter(machine, opts) {
   const filter = {
     machine,
     deleted_at: null,
-    $and: [NOT_TAGGED, NOT_NAMED]
+    $and: [NOT_TAGGED, NOT_NAMED, NOT_RUNNING]
   };
   if (!opts.all) {
     filter["updated_at"] = {
@@ -29407,6 +29441,7 @@ function purgeBulkFilter(pattern, opts) {
   conditions.push({
     $or: [{ deleted_at: { $ne: null } }, { $and: [NOT_NAMED, NOT_TAGGED] }]
   });
+  conditions.push(NOT_RUNNING);
   const query = {};
   if (opts.host) {
     query["machine"] = opts.host.includes(".") ? { $regex: `^${escapeRegex(opts.host)}$`, $options: "i" } : { $regex: `^${escapeRegex(opts.host)}(\\.|$)`, $options: "i" };
@@ -29554,6 +29589,7 @@ async function cmdSync(config, quiet) {
   const machine = getHostname(config);
   const tmuxSessions = await tmuxListSessions();
   const records = [];
+  const tmuxOf = new Map;
   const projectDirs = readdirSync(claudeDir);
   for (const dirName of projectDirs) {
     const dirPath = join2(claudeDir, dirName);
@@ -29587,11 +29623,10 @@ async function cmdSync(config, quiet) {
         if (parsed.messageCount === 0)
           continue;
         const tmuxSessionName = tmuxName(sessionId, parsed.sessionName, projectName);
-        const tmuxInfo = tmuxSessions.get(tmuxSessionName) ?? tmuxSessions.get(`cs-${sessionId.slice(0, 8)}`);
-        let state = null;
-        if (tmuxInfo) {
-          state = await detectLiveState(tmuxSessionName);
-        }
+        const legacyName = `cs-${sessionId.slice(0, 8)}`;
+        const matched = tmuxSessions.has(tmuxSessionName) ? tmuxSessionName : tmuxSessions.has(legacyName) ? legacyName : null;
+        if (matched)
+          tmuxOf.set(sessionId, matched);
         const summary = await readSummary(dirPath, sessionId);
         records.push({
           _v: SCHEMA_VERSION,
@@ -29605,8 +29640,8 @@ async function cmdSync(config, quiet) {
           title: parsed.sessionName ?? parsed.title,
           agent_name: parsed.sessionName,
           tag: null,
-          state,
-          tmux_session: tmuxInfo ? tmuxSessionName : null,
+          state: null,
+          tmux_session: null,
           summary,
           synced_at: new Date,
           deleted_at: null
@@ -29622,10 +29657,32 @@ async function cmdSync(config, quiet) {
       console.log("No sessions found to sync.");
     return;
   }
+  const owners = tmuxOwners(records.map((r) => ({
+    session_id: r.session_id,
+    tmux: tmuxOf.get(r.session_id) ?? null,
+    updated_at: r.updated_at
+  })));
+  for (const rec of records) {
+    const tmux = tmuxOf.get(rec.session_id);
+    if (!tmux || !owners.has(rec.session_id))
+      continue;
+    rec.state = await detectLiveState(tmux);
+    rec.tmux_session = tmux;
+  }
   await withDb(config, async (_db, sessions) => {
     await ensureIndexes(sessions);
     const deleted = await sessions.find({ machine: records[0]?.machine, deleted_at: { $ne: null } }).project({ session_id: 1 }).toArray();
     const deletedIds = new Set(deleted.map((d) => d.session_id));
+    const stateOps = records.filter((rec) => deletedIds.has(rec.session_id)).map((rec) => ({
+      updateOne: {
+        filter: { session_id: rec.session_id, machine: rec.machine },
+        update: { $set: { state: rec.state, tmux_session: rec.tmux_session } }
+      }
+    }));
+    if (stateOps.length > 0)
+      await sessions.bulkWrite(stateOps);
+    const runningNow = records.filter((r) => r.tmux_session !== null).map((r) => r.session_id);
+    await sessions.updateMany({ machine, session_id: { $nin: runningNow }, state: { $in: [...LIVE_STATES] } }, { $set: { state: null, tmux_session: null } });
     const ops = records.filter((rec) => !deletedIds.has(rec.session_id)).map((rec) => {
       const { tag: _tag, deleted_at: _del, ...rest } = rec;
       return {
@@ -30691,48 +30748,39 @@ Aborted (no input available).`);
 Purged ${parts.join(", ")}.`);
   });
 }
+var GC_HEADERS = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
+var GC_WIDTHS = [12, 14, 8, 8, 10, 30];
+function gcRow(config, s) {
+  const proj = s.project_name.length > 12 ? s.project_name.slice(0, 11) + ">" : s.project_name;
+  const title = s.title ?? "(no title)";
+  const truncTitle = title.length > 30 ? title.slice(0, 29) + ">" : title;
+  return [
+    staleText(proj, s.updated_at),
+    dim(s.session_id.slice(0, 14)),
+    machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]),
+    stateColor(s.state),
+    relativeTime(s.updated_at),
+    staleText(truncTitle, s.updated_at)
+  ];
+}
 async function cmdGc(config, confirm) {
   await withDb(config, async (_db, sessions) => {
-    const all = await sessions.find({ deleted_at: null }).sort({ updated_at: -1 }).toArray();
-    const groups = new Map;
-    for (const s of all) {
-      const key = `${s.project_name}\x00${s.machine}`;
-      let group = groups.get(key);
-      if (!group) {
-        group = [];
-        groups.set(key, group);
-      }
-      group.push(s);
-    }
-    const candidates = [];
-    for (const group of groups.values()) {
-      if (group.length <= 1)
-        continue;
-      candidates.push(...group.slice(1));
+    const all = await sessions.find({ deleted_at: null }).toArray();
+    const { remove: candidates, keptRunning } = gcPlan(all);
+    if (keptRunning.length > 0) {
+      console.log(`${bold("Kept")} ${keptRunning.length} older session(s) that are running:
+`);
+      console.log(formatTable(GC_HEADERS, keptRunning.map((s) => gcRow(config, s)), GC_WIDTHS));
+      console.log("");
     }
     if (candidates.length === 0) {
-      console.log("No GC candidates \u2014 each project+host has at most one session.");
+      console.log(keptRunning.length > 0 ? "No other GC candidates." : "No GC candidates \u2014 each project+host has at most one session.");
       return;
     }
-    candidates.sort((a, b) => b.updated_at.getTime() - a.updated_at.getTime());
-    const headers = ["PROJECT", "ID", "HOST", "STATE", "UPDATED", "TITLE"];
-    const colWidths = [12, 14, 8, 8, 10, 30];
-    const rows = candidates.map((s) => {
-      const proj = s.project_name.length > 12 ? s.project_name.slice(0, 11) + ">" : s.project_name;
-      const title = s.title ?? "(no title)";
-      const truncTitle = title.length > 30 ? title.slice(0, 29) + ">" : title;
-      return [
-        staleText(proj, s.updated_at),
-        dim(s.session_id.slice(0, 14)),
-        machineColor(config.listFQDN ? s.machine : s.machine.split(".")[0]),
-        stateColor(s.state),
-        relativeTime(s.updated_at),
-        staleText(truncTitle, s.updated_at)
-      ];
-    });
+    const rows = candidates.map((s) => gcRow(config, s));
     console.log(`${bold("GC candidates")}: ${candidates.length} older session(s) in projects with multiple sessions
 `);
-    console.log(formatTable(headers, rows, colWidths));
+    console.log(formatTable(GC_HEADERS, rows, GC_WIDTHS));
     if (!confirm) {
       console.log(`
 Run ${bold("cs gc --yes")} to soft-delete these sessions.`);
