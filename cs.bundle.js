@@ -28897,12 +28897,45 @@ var COMMANDS = [
     details: [{ p: "Display the usage summary and exit." }]
   }
 ];
+var ARG_SPECS = {
+  "": { flags: ["--orphans"], optionalValues: ["--sort"], positionals: 0 },
+  sync: { flags: ["--quiet"], positionals: 0 },
+  list: {
+    flags: ["--local"],
+    values: ["--host", "--project", "--limit"],
+    optionalValues: ["--sort"],
+    positionals: 0
+  },
+  launch: { positionals: "rest" },
+  adopt: { flags: ["--attach"], positionals: 1 },
+  attach: { flags: ["--latest"], values: ["--host"], positionals: 1 },
+  kill: { flags: ["--all"], values: ["--host"], positionals: 1 },
+  resume: { positionals: 0 },
+  last: { positionals: 0 },
+  status: { positionals: 0 },
+  tag: { positionals: 2 },
+  info: { positionals: 1 },
+  hosts: { positionals: 0 },
+  rm: { flags: ["--undo"], positionals: 1 },
+  prune: { flags: ["--all"], values: ["--days"], positionals: 0 },
+  deleted: { flags: ["--local"], values: ["--host"], positionals: 0 },
+  gc: { flags: ["--yes"], positionals: 0 },
+  purge: {
+    flags: ["--yes", "--all", "--deleted", "--orphans"],
+    values: ["--host"],
+    positionals: "rest"
+  },
+  "add-key": { flags: ["--all"], values: ["--host"], positionals: 0 },
+  agent: { flags: ["--all"], values: ["--host"], positionals: 1 },
+  update: { flags: ["--all", "--force"], positionals: 0 },
+  version: { positionals: 0 }
+};
 
 // lib.ts
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.11.1";
+var VERSION = "1.12.0";
 var SCHEMA_VERSION = 2;
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -29292,8 +29325,30 @@ function tmuxName(sessionId, title, projectName) {
   }
   return shortId(sessionId);
 }
-function unexpectedArgs(args, allowed) {
-  return args.filter((a) => !allowed.includes(a));
+function checkArgs(args, spec) {
+  const positionals = [];
+  for (let i = 0;i < args.length; i++) {
+    const a = args[i];
+    const next = args[i + 1];
+    const nextIsValue = next !== undefined && !next.startsWith("-");
+    if (!a.startsWith("-")) {
+      positionals.push(a);
+    } else if (spec.values?.includes(a)) {
+      if (!nextIsValue)
+        return `${a} needs a value`;
+      i++;
+    } else if (spec.optionalValues?.includes(a)) {
+      if (nextIsValue)
+        i++;
+    } else if (!spec.flags?.includes(a)) {
+      return `unknown option ${a}`;
+    }
+  }
+  const max = spec.positionals;
+  if (max !== "rest" && positionals.length > max) {
+    return `unexpected argument ${positionals[max]}`;
+  }
+  return null;
 }
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -31096,13 +31151,28 @@ ${bold("Environment:")}
   CS_MIRROR_URL                   Second origin whose checksum must match (update/install)
   NO_COLOR                        Disable color output`);
 }
+function rejectBadArgs(command, args) {
+  const aliased = command === "--version" ? "version" : command;
+  const dashboard = aliased === undefined || aliased.startsWith("-");
+  const key = dashboard ? "" : aliased;
+  const spec = ARG_SPECS[key];
+  if (!spec)
+    return;
+  const problem = checkArgs(dashboard ? args : args.slice(1), spec);
+  if (problem) {
+    console.error(`cs${key ? ` ${key}` : ""}: ${problem}`);
+    console.error(`Run ${bold("cs --help")} for usage.`);
+    process.exit(1);
+  }
+}
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
-  if (command === "--help" || command === "-h") {
+  if (args.includes("--help") || args.includes("-h")) {
     printUsage();
     return;
   }
+  rejectBadArgs(command, args);
   if (command === "status") {
     await cmdStatus();
     return;
@@ -31148,12 +31218,6 @@ async function main() {
     return;
   }
   if (command === "update") {
-    const unexpected = unexpectedArgs(args.slice(1), ["--all", "--force"]);
-    if (unexpected.length > 0) {
-      console.error(`Unknown argument(s) for cs update: ${unexpected.join(" ")}`);
-      console.error("Usage: cs update [--force] [--all]");
-      process.exit(1);
-    }
     if (args.includes("--all")) {
       let config;
       try {
