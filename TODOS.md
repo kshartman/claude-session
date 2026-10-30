@@ -1,5 +1,15 @@
 # TODOS
 
+**Reference, not dependency:** gbrain (https://github.com/garrytan/gbrain, MIT)
+covers similar ground (MCP server, engine abstraction, persistent memory), but it is
+~3,300 TS files and not installed fleet-wide. Borrow its patterns; never import or
+require it. cs must stay a single bundle with no extra per-host installs.
+
+**Ownership:** on-demand skills/tools live in a separate skills repo; hooks live
+in a separate hooks/config repo; cs owns the CLI, tmux, sync and the `claude` DB
+schema. Adjacent pieces couple to cs only through a versioned CLI contract
+(a `contract N` integer + documented exit codes), never by importing cs.
+
 ## ~~P1 — Background sync via user cron instead of .bashrc~~
 **Completed:** v1.3.8 (2026-03-21)
 
@@ -22,7 +32,19 @@ What it replaces: `cs sync` JSONL parsing, tmux `capture-pane` state detection,
 title extraction, summary parsing. What stays: tmux management, CLI commands,
 cross-machine visibility. Cron sync becomes a fallback for sessions not using
 the MCP.
-**Effort:** M human / S CC (~45 min)
+**Split:** cs adds a contract entry point (e.g. `cs report <state>`) that writes
+the record, and keeps owning the schema and `tmuxOwners`. The hook that calls it
+lives in the hooks repo; any MCP/summary skill lives in the skills repo.
+**Hooks first (to evaluate before building the MCP server):** Claude Code hooks
+fire on lifecycle events deterministically, without relying on Claude choosing
+to call a tool. They may cover state reporting (WORKING/WAITING/IDLE) on their
+own, leaving MCP only for summaries. Check the current hook event list first.
+**Borrow from gbrain:** `src/mcp/server.ts`: stdio server built directly on
+`@modelcontextprotocol/sdk`, registered via `claude mcp add`, plus instruction
+text that tells the agent when to call it. Write cs's own (~150 lines); gbrain's
+server is coupled to its operation manifest and config layers.
+**Effort:** M (the ~45 min estimate was low: per-host registration, cron fallback,
+ownership interplay with `tmuxOwners`)
 **Depends on:** Claude Code MCP support (already available in v2.1.80+).
 
 ## P2 — Pluggable storage backend (SessionStore abstraction)
@@ -49,6 +71,10 @@ Config selects the backend:
 ```
 Default: SQLite (zero config, works out of the box). Current behavior preserved
 when `mongoUri` is present (implicit MongoDB mode for backward compat).
+**Borrow from gbrain:** the shape of `src/core/engine.ts` + `engine-factory.ts`
+(one interface, a factory that selects by config, one file per backend). Not the
+size: gbrain's interface has ~139 methods; cs needs about five. Use built-in
+`bun:sqlite` for the local store (no dependency), not gbrain's PGLite.
 **Effort:** L human / M CC (~1 hr)
 **Depends on:** Nothing — can be done anytime. SQLite first, DynamoDB second.
 
@@ -60,7 +86,10 @@ re-discovering context.
 **Why:** 12-month vision — "never lose context." Sessions end, but knowledge shouldn't.
 **Context:** The `memory` collection already exists in the `claude` DB. Schema design
 is unclear until real-world usage reveals what's worth remembering. Start by observing
-what you wish you'd remembered between sessions.
+what you wish you'd remembered between sessions. **Not in cs:** an adjacent
+facility in the skills repo that uses the same `claude` MongoDB so every host
+shares it. cs's only role is the DB connection/config it may reuse. gbrain solves the same problem (Postgres/PGLite) and is
+worth reading for its memory model and search before designing the schema.
 **Effort:** M human / S CC (~30 min)
 **Depends on:** Core cs shipped and in daily use.
 
