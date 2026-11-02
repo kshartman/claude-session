@@ -1682,7 +1682,7 @@ async function cmdPurge(
         }
 
         for (const m of resolved) {
-          const key = `${m.session_id} ${m.machine}`;
+          const key = `${m.session_id}\0${m.machine}`;
           if (!seen.has(key)) {
             seen.add(key);
             matches.push(m);
