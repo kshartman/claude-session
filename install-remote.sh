@@ -202,7 +202,9 @@ else
   if crontab -l 2>/dev/null | grep -q "cs sync"; then
     echo "  Cron sync already configured"
   else
-    (crontab -l 2>/dev/null; echo "*/5 * * * * $CRON_CMD") | crontab -
+    # `|| true`: with no crontab yet, `crontab -l` exits 1, and under set -e that
+    # aborted the group before echo, installing an EMPTY crontab and exiting 1.
+    { crontab -l 2>/dev/null || true; echo "*/5 * * * * $CRON_CMD"; } | crontab -
     echo "  Added cron: sync every 5 minutes"
   fi
 fi
