@@ -135,3 +135,18 @@ never updated after that. A lightweight approach: fetch a `config.defaults.json`
 from the repo, diff keys against local config, print warnings for missing keys.
 **Effort:** S (CC ~15 min)
 **Depends on:** A config change that actually requires propagation (none yet).
+
+## P4 (someday) — Migrate pre-v1.14.1 cron lines and the macOS cs-sync wrapper
+Rewrite periodic-sync entries written before v1.14.1 so they use
+`pathAppendStatement` (append, skip present/missing) instead of the old prepend.
+
+**Why:** Consistency only. The old lines still work: every host synced through
+them on v1.14.1. They prepend `~/.local/bin`/`~/.bun/bin` for `cs sync` alone,
+which never runs a claude session, so no session PATH is affected.
+**Context:** `ensureCron` only writes an entry when none exists, so old lines
+stay as they are. Fix: in `ensureCron`, detect a `cs sync` crontab line or a
+`cs-sync` wrapper that lacks the current statement and rewrite it in place,
+leaving every other crontab line untouched. Back up the crontab first, and test
+against the stub-`crontab` pattern used for the install-remote fix.
+**Effort:** S
+**Depends on:** Nothing. Do it when there is nothing better to do.
