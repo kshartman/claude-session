@@ -225,7 +225,9 @@ Source layout:
   // --- state detection ---
   // --- prefix matching ---     (also sameProjectCandidates, parsePickChoice)
   // --- table formatting ---
-  // --- shell quoting ---       (also remotePurgeCommand, groupByMachine, tmuxToKill)
+  // --- shell quoting ---       (also remotePurgeCommand, groupByMachine, tmuxToKill,
+  //                               remotePathDirs + pathAppendStatement: the one
+  //                               PATH setup every cs-built shell runs — APPENDS)
   // --- tmux session name ---
   // --- argument checks ---     (ArgSpec, parseArgs, parsePositiveInt)
   // --- mongo filters ---       (prune/purge filters; running guard: isRunning,

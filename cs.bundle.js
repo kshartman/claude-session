@@ -28940,8 +28940,9 @@ var ARG_SPECS = {
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
-var VERSION = "1.14.0";
+var VERSION = "1.14.1";
 var SCHEMA_VERSION = 2;
+var DEFAULT_REMOTE_PATH = "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin";
 var CONFIG_DIR = join(homedir(), ".config", "cs");
 var CONFIG_PATH = join(CONFIG_DIR, "config.json");
 function loadConfig() {
@@ -28977,7 +28978,7 @@ function loadConfig() {
     showDetachHint: parsed["showDetachHint"] === true,
     listFQDN: parsed["listFQDN"] !== false,
     noCron: parsed["noCron"] === true,
-    remotePath: typeof parsed["remotePath"] === "string" ? parsed["remotePath"] : "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin",
+    remotePath: typeof parsed["remotePath"] === "string" && parsed["remotePath"].trim() ? parsed["remotePath"] : DEFAULT_REMOTE_PATH,
     repoUrl: typeof parsed["repoUrl"] === "string" ? parsed["repoUrl"] : undefined,
     mirrorUrl: typeof parsed["mirrorUrl"] === "string" && parsed["mirrorUrl"] ? parsed["mirrorUrl"] : undefined,
     agentKeyTimeout: typeof parsed["agentKeyTimeout"] === "number" ? parsed["agentKeyTimeout"] : 28800,
@@ -29351,8 +29352,31 @@ function formatTable(headers, rows, colWidths) {
 function shellQuote(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
-function remotePurgeCommand(pathPrefix, sessionIds) {
-  return `${pathPrefix} CS_NO_REMOTE=1 cs purge --yes ${sessionIds.map(shellQuote).join(" ")}`;
+var SAFE_PATH_DIR = /^(\/|\$HOME(\/|$))[A-Za-z0-9._\/+@-]*$/;
+function remotePathDirs(remotePath) {
+  const dirs = [];
+  const rejected = [];
+  for (const raw of remotePath.split(":")) {
+    const entry = raw.trim().replace(/^~(?=\/|$)/, "$HOME");
+    if (!entry)
+      continue;
+    if (SAFE_PATH_DIR.test(entry)) {
+      if (!dirs.includes(entry))
+        dirs.push(entry);
+    } else {
+      rejected.push(raw);
+    }
+  }
+  return { dirs, rejected };
+}
+function pathAppendStatement(dirs) {
+  if (dirs.length === 0)
+    return "export PATH";
+  const words = dirs.map((d) => `"${d}"`).join(" ");
+  return `for _cs_d in ${words}; do case ":$PATH:" in *":$_cs_d:"*) ;; *) if [ -d "$_cs_d" ]; then PATH="\${PATH:+$PATH:}$_cs_d"; fi ;; esac; done; unset _cs_d; export PATH`;
+}
+function remotePurgeCommand(pathSetup, sessionIds) {
+  return `${pathSetup}; CS_NO_REMOTE=1 cs purge --yes ${sessionIds.map(shellQuote).join(" ")}`;
 }
 function groupByMachine(records) {
   const groups = new Map;
@@ -30115,7 +30139,7 @@ async function cmdAttach(config, prefix, host, latest) {
     const ensureScript = [
       `#!/bin/bash`,
       `source ~/.bash_profile 2>/dev/null || source ~/.bashrc 2>/dev/null`,
-      `export PATH="${config.remotePath}:$PATH"`,
+      remotePathSetup(config),
       `AGENT_SOCK="${agentSock}"`,
       `export SSH_AUTH_SOCK="$AGENT_SOCK"`,
       `ssh-add -l >/dev/null 2>&1; AGENT_RC=$?`,
@@ -30172,7 +30196,7 @@ async function cmdAttach(config, prefix, host, latest) {
       "-o",
       "ControlPath=none",
       "-t",
-      `export SSH_AUTH_SOCK="${agentSock}"; ` + `export PATH="${config.remotePath}:$PATH"; ` + `if ! ssh-add -l >/dev/null 2>&1; then ` + `  echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."; ` + `  ssh-add -t ${keyTimeout}${config.agentKeyFile ? ` "${config.agentKeyFile.replace(/^~/, "$HOME")}"` : ""}; ` + `fi; ` + `exec tmux attach-session -t ${qTmux}`
+      `export SSH_AUTH_SOCK="${agentSock}"; ` + `${remotePathSetup(config)}; ` + `if ! ssh-add -l >/dev/null 2>&1; then ` + `  echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."; ` + `  ssh-add -t ${keyTimeout}${config.agentKeyFile ? ` "${config.agentKeyFile.replace(/^~/, "$HOME")}"` : ""}; ` + `fi; ` + `exec tmux attach-session -t ${qTmux}`
     ], {
       stdin: "inherit",
       stdout: "inherit",
@@ -30696,7 +30720,7 @@ async function purgeOnRemoteHosts(config, records) {
   for (const [host, group] of groupByMachine(records)) {
     console.log(`
 ${machineColor(host.split(".")[0])}: purging ${group.length} session(s) over SSH...`);
-    const run = await sshTry(sshHostCandidates(host), remotePurgeCommand(remoteCsPath(config), group.map((g) => g.session_id)));
+    const run = await sshTry(sshHostCandidates(host), remotePurgeCommand(remotePathSetup(config), group.map((g) => g.session_id)));
     for (const line of run.stdout.trim().split(`
 `).filter(Boolean))
       console.log(`  ${line}`);
@@ -30891,7 +30915,7 @@ async function cmdAddKey(config, host, all) {
   const keyFileArg = config.agentKeyFile ? ` "${config.agentKeyFile.replace(/^~/, "$HOME")}"` : "";
   const script = [
     `export SSH_AUTH_SOCK="${CS_AGENT_SOCK_SH}"`,
-    `export PATH="${config.remotePath}:$PATH"`,
+    remotePathSetup(config),
     `ssh-add -l >/dev/null 2>&1; rc=$?`,
     `[ "$rc" -eq 2 ] && eval $(ssh-agent -a "$SSH_AUTH_SOCK") >/dev/null 2>&1`,
     `echo "Adding SSH key (expires in ${Math.floor(keyTimeout / 3600)}h)..."`,
@@ -31011,6 +31035,7 @@ function ensureCron() {
     } catch {}
     if (noCron)
       return;
+    const syncPathSetup = pathAppendStatement(remotePathDirs(DEFAULT_REMOTE_PATH).dirs);
     const isMac = process.platform === "darwin";
     if (isMac) {
       const csUser = process.env["USER"] ?? "user";
@@ -31021,7 +31046,7 @@ function ensureCron() {
       const wrapperPath = join2(homedir2(), ".local", "bin", "cs-sync");
       const wrapper = `#!/bin/bash
 # cs sync helper \u2014 named so macOS Login Items shows "cs-sync", not "bash".
-export PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:$PATH"
+${syncPathSetup}
 exec cs sync --quiet
 `;
       const plist = `<?xml version="1.0" encoding="UTF-8"?>
@@ -31059,7 +31084,7 @@ exec cs sync --quiet
       const cron = Bun.spawnSync(["bash", "-c", "crontab -l 2>/dev/null"]);
       const cronOut = cron.stdout.toString();
       if (!cronOut.includes("cs sync")) {
-        const cronLine = '*/5 * * * * PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" cs sync --quiet 2>/dev/null';
+        const cronLine = `*/5 * * * * ${syncPathSetup}; cs sync --quiet 2>/dev/null`;
         const script = `existing=$(crontab -l 2>/dev/null)
 printf '%s\\n%s\\n' "$existing" '${cronLine}' | crontab -`;
         const result = Bun.spawnSync(["bash", "-c", script]);
@@ -31167,8 +31192,12 @@ async function cmdUpdate(force = false) {
   console.log(`Updated to cs v${remoteVersion}`);
   ensureCron();
 }
-function remoteCsPath(config) {
-  return `PATH="${config.remotePath}:$PATH"`;
+function remotePathSetup(config) {
+  const { dirs, rejected } = remotePathDirs(config.remotePath ?? DEFAULT_REMOTE_PATH);
+  if (rejected.length > 0) {
+    console.error(dim(`remotePath: ignoring ${rejected.map((r) => JSON.stringify(r)).join(", ")} (must be absolute or under $HOME)`));
+  }
+  return pathAppendStatement(dirs);
 }
 async function sshTry(tryHosts, command) {
   let last = {
@@ -31201,13 +31230,13 @@ async function sshTry(tryHosts, command) {
 }
 async function updateHost(config, host, target) {
   const tryHosts = sshHostCandidates(host);
-  const run = await sshTry(tryHosts, `${remoteCsPath(config)} cs update`);
+  const run = await sshTry(tryHosts, `${remotePathSetup(config)}; cs update`);
   if (run.exitCode === 0) {
     return { outcome: "updated", line: run.stdout.trim().split(`
 `).pop() ?? "done" };
   }
   const reason = firstLine(run.stderr) || `exit ${run.exitCode}`;
-  const probe = await sshTry(tryHosts, `${remoteCsPath(config)} cs version`);
+  const probe = await sshTry(tryHosts, `${remotePathSetup(config)}; cs version`);
   if (probe.exitCode !== 0) {
     return { outcome: "unreachable", line: dim(`unreachable \u2014 ${reason}`) };
   }

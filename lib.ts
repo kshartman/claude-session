@@ -2,7 +2,7 @@
 
 // VERSION is canonical in the VERSION file; `bun run build` syncs this constant
 // via scripts/sync-version.ts. Edit the VERSION file, not this line.
-export const VERSION = "1.14.0";
+export const VERSION = "1.14.1";
 export const SCHEMA_VERSION = 2;
 
 export type SessionState = "WORKING" | "WAITING" | "IDLE" | "DEAD";
@@ -58,6 +58,9 @@ export interface CsConfig {
 
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
+
+/** Where cs, bun, tmux and claude live when a non-login shell's PATH lacks them. */
+export const DEFAULT_REMOTE_PATH = "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin";
 import { homedir, hostname as osHostname } from "os";
 
 const CONFIG_DIR = join(homedir(), ".config", "cs");
@@ -101,7 +104,10 @@ export function loadConfig(): CsConfig {
     showDetachHint: parsed["showDetachHint"] === true,
     listFQDN: parsed["listFQDN"] !== false,
     noCron: parsed["noCron"] === true,
-    remotePath: typeof parsed["remotePath"] === "string" ? parsed["remotePath"] : "$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin",
+    // "" means unset: an empty remotePath must never reach PATH as an empty element.
+    remotePath: typeof parsed["remotePath"] === "string" && parsed["remotePath"].trim()
+      ? parsed["remotePath"]
+      : DEFAULT_REMOTE_PATH,
     repoUrl: typeof parsed["repoUrl"] === "string" ? parsed["repoUrl"] : undefined,
     mirrorUrl: typeof parsed["mirrorUrl"] === "string" && parsed["mirrorUrl"] ? parsed["mirrorUrl"] : undefined,
     agentKeyTimeout: typeof parsed["agentKeyTimeout"] === "number" ? parsed["agentKeyTimeout"] : 28800,
@@ -653,14 +659,52 @@ export function shellQuote(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
+/** An absolute dir, or one under $HOME, with no characters a double-quoted shell word would act on. */
+const SAFE_PATH_DIR = /^(\/|\$HOME(\/|$))[A-Za-z0-9._\/+@-]*$/;
+
+/**
+ * remotePath split into dirs safe to splice into a double-quoted shell word.
+ * A leading `~/` becomes `$HOME/` (tilde does not expand inside quotes). Empty
+ * elements are dropped; relative or unsafe ones come back in `rejected` so the
+ * caller can warn instead of silently changing PATH.
+ */
+export function remotePathDirs(remotePath: string): { dirs: string[]; rejected: string[] } {
+  const dirs: string[] = [];
+  const rejected: string[] = [];
+  for (const raw of remotePath.split(":")) {
+    const entry = raw.trim().replace(/^~(?=\/|$)/, "$HOME");
+    if (!entry) continue;
+    if (SAFE_PATH_DIR.test(entry)) {
+      if (!dirs.includes(entry)) dirs.push(entry);
+    } else {
+      rejected.push(raw);
+    }
+  }
+  return { dirs, rejected };
+}
+
+/**
+ * A POSIX shell statement that APPENDS each dir to PATH, skipping any already
+ * on PATH or missing on the host. Appending keeps the system and dotfiles
+ * order in front, so a same-named file in a user-writable dir never shadows a
+ * system command; `${PATH:+...}` keeps an empty PATH from gaining an empty
+ * element. Ends in `export PATH` so it is a complete statement to join with `;`.
+ */
+export function pathAppendStatement(dirs: readonly string[]): string {
+  if (dirs.length === 0) return "export PATH";
+  const words = dirs.map((d) => `"${d}"`).join(" ");
+  return `for _cs_d in ${words}; do case ":$PATH:" in *":$_cs_d:"*) ;; *) if [ -d "$_cs_d" ]; then PATH="\${PATH:+$PATH:}$_cs_d"; fi ;; esac; done; unset _cs_d; export PATH`;
+}
+
 /**
  * The command a host runs to purge its share of a confirmed purge: the exact
  * session IDs the user saw and confirmed, via single-target purge — never a
  * pattern, so the remote can't re-evaluate a filter and widen the set.
  * CS_NO_REMOTE=1 stops the remote from fanning out over SSH in turn.
+ * `pathSetup` is a complete statement (see pathAppendStatement).
  */
-export function remotePurgeCommand(pathPrefix: string, sessionIds: readonly string[]): string {
-  return `${pathPrefix} CS_NO_REMOTE=1 cs purge --yes ${sessionIds.map(shellQuote).join(" ")}`;
+export function remotePurgeCommand(pathSetup: string, sessionIds: readonly string[]): string {
+  return `${pathSetup}; CS_NO_REMOTE=1 cs purge --yes ${sessionIds.map(shellQuote).join(" ")}`;
 }
 
 /** Records grouped by `machine`, hosts in sorted order. */

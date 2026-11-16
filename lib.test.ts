@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -15,6 +15,9 @@ import {
   fleetHosts,
   tmuxToKill,
   remotePurgeCommand,
+  remotePathDirs,
+  pathAppendStatement,
+  DEFAULT_REMOTE_PATH,
   groupByMachine,
   gcPlan,
   tmuxOwners,
@@ -821,8 +824,8 @@ describe("tmuxOwners", () => {
 
 describe("remotePurgeCommand", () => {
   test("sends the exact quoted IDs via single-target purge, with no-fanout guard", () => {
-    const cmd = remotePurgeCommand("PATH=/x:$PATH", ["aaaa-1111", "bbbb-2222"]);
-    expect(cmd).toBe("PATH=/x:$PATH CS_NO_REMOTE=1 cs purge --yes 'aaaa-1111' 'bbbb-2222'");
+    const cmd = remotePurgeCommand("export PATH", ["aaaa-1111", "bbbb-2222"]);
+    expect(cmd).toBe("export PATH; CS_NO_REMOTE=1 cs purge --yes 'aaaa-1111' 'bbbb-2222'");
   });
 
   test("never bulk mode: no --all, no pattern, no --deleted", () => {
@@ -834,7 +837,121 @@ describe("remotePurgeCommand", () => {
 
   test("shell metacharacters in an ID stay inside quotes", () => {
     const cmd = remotePurgeCommand("P", ["x'; rm -rf ~ #"]);
-    expect(cmd).toBe("P CS_NO_REMOTE=1 cs purge --yes 'x'\\''; rm -rf ~ #'");
+    expect(cmd).toBe("P; CS_NO_REMOTE=1 cs purge --yes 'x'\\''; rm -rf ~ #'");
+  });
+});
+
+// --- remote PATH setup ---
+
+describe("remotePathDirs", () => {
+  test("default splits into the three dirs, none rejected", () => {
+    expect(remotePathDirs(DEFAULT_REMOTE_PATH)).toEqual({
+      dirs: ["$HOME/.local/bin", "$HOME/.bun/bin", "/opt/homebrew/bin"],
+      rejected: [],
+    });
+  });
+
+  test("empty and blank elements are dropped, never kept as an empty dir", () => {
+    expect(remotePathDirs("")).toEqual({ dirs: [], rejected: [] });
+    expect(remotePathDirs(":/usr/local/bin::  :")).toEqual({ dirs: ["/usr/local/bin"], rejected: [] });
+  });
+
+  test("~/ becomes $HOME/ (tilde does not expand inside quotes); duplicates collapse", () => {
+    expect(remotePathDirs("~/bin:$HOME/bin:~").dirs).toEqual(["$HOME/bin", "$HOME"]);
+  });
+
+  test("relative and shell-active entries are rejected, not spliced", () => {
+    const r = remotePathDirs('bin:./x:/ok:/a b:/x"y:$(id):`id`:$HOMEx/bin');
+    expect(r.dirs).toEqual(["/ok"]);
+    expect(r.rejected).toEqual(["bin", "./x", "/a b", '/x"y', "$(id)", "`id`", "$HOMEx/bin"]);
+  });
+});
+
+describe("pathAppendStatement", () => {
+  /** Run the statement in bash with a fixed PATH and HOME; return the resulting PATH. */
+  function runWith(stmt: string, path: string, home: string): string {
+    const r = Bun.spawnSync(["/bin/bash", "-c", `${stmt}; printf %s "$PATH"`], {
+      env: { PATH: path, HOME: home },
+    });
+    expect(r.exitCode).toBe(0);
+    return r.stdout.toString();
+  }
+
+  function withHome(fn: (home: string) => void): void {
+    const home = mkdtempSync(join(tmpdir(), "cs-path-"));
+    try {
+      fn(home);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  test("appends dirs AFTER the existing PATH, so system dirs keep precedence", () => {
+    withHome((home) => {
+      Bun.spawnSync(["mkdir", "-p", `${home}/.local/bin`, `${home}/.bun/bin`]);
+      const stmt = pathAppendStatement(["$HOME/.local/bin", "$HOME/.bun/bin"]);
+      expect(runWith(stmt, "/usr/bin:/bin", home)).toBe(`/usr/bin:/bin:${home}/.local/bin:${home}/.bun/bin`);
+    });
+  });
+
+  test("skips dirs already on PATH, wherever they are", () => {
+    withHome((home) => {
+      Bun.spawnSync(["mkdir", "-p", `${home}/.local/bin`, `${home}/.bun/bin`]);
+      const stmt = pathAppendStatement(["$HOME/.local/bin", "$HOME/.bun/bin"]);
+      const before = `/usr/bin:${home}/.bun/bin:/bin`;
+      expect(runWith(stmt, before, home)).toBe(`${before}:${home}/.local/bin`);
+    });
+  });
+
+  test("skips dirs that do not exist on the host", () => {
+    withHome((home) => {
+      const stmt = pathAppendStatement(["$HOME/missing", "/opt/homebrew-not-here/bin"]);
+      expect(runWith(stmt, "/usr/bin:/bin", home)).toBe("/usr/bin:/bin");
+    });
+  });
+
+  test("an empty PATH gains no empty (leading-colon) element", () => {
+    withHome((home) => {
+      Bun.spawnSync(["mkdir", "-p", `${home}/bin`]);
+      expect(runWith(pathAppendStatement(["$HOME/bin"]), "", home)).toBe(`${home}/bin`);
+    });
+  });
+
+  test("no dirs is still a complete, harmless statement", () => {
+    expect(pathAppendStatement([])).toBe("export PATH");
+  });
+
+  test("install-remote.sh writes the same PATH setup cs does (cron line + mac wrapper)", () => {
+    const stmt = pathAppendStatement(remotePathDirs(DEFAULT_REMOTE_PATH).dirs);
+    const script = readFileSync(join(import.meta.dir, "install-remote.sh"), "utf-8");
+    expect(script.split(stmt).length - 1).toBe(2);
+  });
+});
+
+describe("loadConfig remotePath", () => {
+  function remotePathFor(value: unknown): string {
+    const home = mkdtempSync(join(tmpdir(), "cs-cfg-"));
+    try {
+      Bun.spawnSync(["mkdir", "-p", join(home, ".config", "cs")]);
+      writeFileSync(join(home, ".config", "cs", "config.json"), JSON.stringify({ mongoUri: "mongodb://x", remotePath: value }));
+      const r = Bun.spawnSync(["bun", "-e", `import { loadConfig } from ${JSON.stringify(join(import.meta.dir, "lib.ts"))}; process.stdout.write(loadConfig().remotePath ?? "<unset>")`], {
+        env: { ...process.env, HOME: home },
+      });
+      expect(r.exitCode).toBe(0);
+      return r.stdout.toString();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  test('"" and blank fall back to the default, never an empty PATH element', () => {
+    expect(remotePathFor("")).toBe(DEFAULT_REMOTE_PATH);
+    expect(remotePathFor("   ")).toBe(DEFAULT_REMOTE_PATH);
+  });
+
+  test("a set value is kept; a non-string falls back to the default", () => {
+    expect(remotePathFor("/usr/local/bin")).toBe("/usr/local/bin");
+    expect(remotePathFor(42)).toBe(DEFAULT_REMOTE_PATH);
   });
 });
 

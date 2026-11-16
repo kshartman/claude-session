@@ -166,7 +166,8 @@ elif [ "$(uname)" = "Darwin" ]; then
     cat > "$WRAPPER" << 'WEOF'
 #!/bin/bash
 # cs sync helper — named so macOS Login Items shows "cs-sync", not "bash".
-export PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:$PATH"
+# PATH setup matches lib.ts pathAppendStatement.
+for _cs_d in "$HOME/.local/bin" "$HOME/.bun/bin" "/opt/homebrew/bin"; do case ":$PATH:" in *":$_cs_d:"*) ;; *) if [ -d "$_cs_d" ]; then PATH="${PATH:+$PATH:}$_cs_d"; fi ;; esac; done; unset _cs_d; export PATH
 exec cs sync --quiet
 WEOF
     chmod 755 "$WRAPPER"
@@ -198,7 +199,10 @@ PEOF
   fi
 else
   # Linux: use crontab
-  CRON_CMD="PATH=\"\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH\" cs sync --quiet 2>/dev/null"
+  # Same PATH setup cs writes (lib.ts pathAppendStatement): user dirs APPENDED,
+  # skipped if already on PATH or missing. Keep the two in step (lib.test.ts checks).
+  # shellcheck disable=SC2016  # literal: expands when cron runs it, not now
+  CRON_CMD='for _cs_d in "$HOME/.local/bin" "$HOME/.bun/bin" "/opt/homebrew/bin"; do case ":$PATH:" in *":$_cs_d:"*) ;; *) if [ -d "$_cs_d" ]; then PATH="${PATH:+$PATH:}$_cs_d"; fi ;; esac; done; unset _cs_d; export PATH; cs sync --quiet 2>/dev/null'
   if crontab -l 2>/dev/null | grep -q "cs sync"; then
     echo "  Cron sync already configured"
   else
